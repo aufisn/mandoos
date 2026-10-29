@@ -1184,10 +1184,12 @@ function normalizeImportedItem(raw){
   if(item.closedAt!=null && (typeof item.closedAt!=='string' || isNaN(Date.parse(item.closedAt)))) item.closedAt = null;
   if(typeof item.dueDate!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate)) item.dueDate = null;
   if(item.snoozedUntil!=null && (typeof item.snoozedUntil!=='string' || isNaN(Date.parse(item.snoozedUntil)))) item.snoozedUntil = null;
-  // A5: a hand-edited or corrupted backup could carry an unsupported recurrence value (e.g.
-  // "yearly") — the generator's own defensive check (A6) would refuse to act on it anyway, but
-  // catching it here means it never even reaches live state as a lingering invalid value. Only
-  // daily/weekly/monthly are real; the canonical "no recurrence" is null, never 'none' or ''.
+  // R5: the Repeat/recurrence feature itself was removed (see SUPPORTED_RECURRENCE's own
+  // comment) — these fields are only ever READ from an old backup/old item now, never written by
+  // anything new, so this is pure backward-compat sanitization: a hand-edited or corrupted backup
+  // could still carry an unsupported value (e.g. "yearly"), and catching it here means it never
+  // lingers in live state as something invalid. Only daily/weekly/monthly are real; the canonical
+  // "no recurrence" is null, never 'none' or ''.
   if(item.recurrence!=null && !SUPPORTED_RECURRENCE.includes(item.recurrence)) item.recurrence = null;
   if(item.recurrence===undefined) item.recurrence = null;
   if(item.recurrenceAnchorDay!=null && !(Number.isInteger(item.recurrenceAnchorDay) && item.recurrenceAnchorDay>=1 && item.recurrenceAnchorDay<=31)) item.recurrenceAnchorDay = null;
@@ -1335,11 +1337,12 @@ function openItems(){ return state.items.filter(i=>i.status==='open'); }
 // a duplicate). Used by saveNewItem at creation and saveEditSheet on rename — the Agenda
 // equivalents (findExactActiveAgendaByName, and its own rename check) follow the identical rule
 // but key off `name` instead of `text`, since Agenda's identity field isn't `text`.
-// A8: two open occurrences from the SAME recurrence series (e.g. a completed-then-reopened
-// occurrence sitting open alongside the successor it already generated) are legitimate siblings,
-// not accidental duplicates — never warn between them. Two otherwise-unrelated open items that
-// simply happen to share the same text must still trigger the warning exactly as before; this
-// only exempts items sharing the same non-null recurrenceSeriesId as the item being excluded.
+// A8/R5: the Repeat/recurrence feature that used to generate these series was removed, so
+// recurrenceSeriesId can now only ever be present on items that already had it from before that
+// removal — this exemption is kept purely so a user who still has old recurring-series siblings
+// open doesn't see a new false-positive duplicate warning between them. Two otherwise-unrelated
+// open items that simply happen to share the same text must still trigger the warning exactly as
+// before; this only exempts items sharing the same non-null recurrenceSeriesId as the excluded one.
 function findExactOpenItemByText(kind, text, excludeId){
   const nq = normalizeItemText(text);
   if(!nq) return null;
@@ -1967,20 +1970,9 @@ function buildMetaPills(item, hf){
         return n ? `<span class="pill kind-vault">${highlightMatches(n, (hf&&hf.tags&&hf.tags.length)?hf.tags:null)}</span>` : '';
       }).join('') },
     { show: focusSecondsFor(item.id) > 0,
-      html: ()=> `<span class="pill kind-vault focus-pill">${FOCUS_PILL_ICON}${fmtHoursMinutes(focusSecondsFor(item.id))}</span>` },
-    // B3/R4-F: appended last, after the fixed Due/Impact-Urgency/Confidence/Assignee/Tags/
-    // Focus-Time order above — never reorders it. Only shown from the 2nd occurrence on; the 1st
-    // occurrence of a recurring item looks exactly like any other card, so this only appears
-    // once there's actually a series to indicate. Recurrence type is appended (e.g. "↻ 3rd ·
-    // weekly") when known, at no real extra cost since item.recurrence is already on hand here.
-    { show: Number.isInteger(item.recurrenceOccurrence) && item.recurrenceOccurrence>1,
-      html: ()=> `<span class="pill kind-vault">↻ ${ordinalLabel(item.recurrenceOccurrence)}${item.recurrence?' · '+item.recurrence:''}</span>` }
+      html: ()=> `<span class="pill kind-vault focus-pill">${FOCUS_PILL_ICON}${fmtHoursMinutes(focusSecondsFor(item.id))}</span>` }
   ];
   return specs.filter(s=>s.show).map(s=>s.html()).join('');
-}
-function ordinalLabel(n){
-  const suf = ['th','st','nd','rd'], v = n%100;
-  return n + (suf[(v-20)%10] || suf[v] || suf[0]);
 }
 // I1-I5: searchableText() (B5) already folds Outcome Log entries — including Focus session
 // notes, which live there as "Focused N min — <note>" (see finalizeFocusSession) — into what
@@ -2249,7 +2241,6 @@ function completeItemCore(item){
     impact:item.impact||null, urgency:item.urgency||null,
     reasoning:item.reasoning||null, confidence:item.confidence||null
   });
-  return generateNextRecurrenceOccurrence(item); // B4 — safe here: this only ever runs once per real open->closed transition. Returns the generated occurrence (or null) so callers (F1: Undo Complete) know what to unwind.
 }
 // The ONE safe completion entry point — swipe-to-complete, Log's bulk Complete, and Edit's
 // Complete button (B1) all call this instead of duplicating the mutation. A3: completing the
@@ -2257,20 +2248,17 @@ function completeItemCore(item){
 // blocking it (like Delete does), this "Stop Focus & Complete"s automatically: finalize the
 // running session first (same logic the Stop Focus sheet uses — elapsed time recorded, Outcome
 // Log entry written, lock released) and only then close the item, so nothing is ever completed
-// out from under a running timer and no ghost activeFocusSession can result. Returns true if the
-// item was actually completed.
-// F1: returns a small result object (truthy) describing what just happened, instead of a plain
-// boolean — callers that only care about success still get a truthy/falsy value for free, but
-// attemptComplete additionally needs enough here (priorPulledOn, the id of any generated next
-// occurrence) to build an accurate Undo.
+// out from under a running timer and no ghost activeFocusSession can result. Returns a small
+// result object (truthy) on success, or null — callers that only care about success still get a
+// truthy/falsy value for free, and attemptComplete uses priorPulledOn/wasFocused to build Undo.
 function completeItemSafely(itemId){
   const item = state.items.find(i=>i.id===itemId);
   if(!item || !canCompleteItem(itemId)) return null;
   const priorPulledOn = item.pulledOn!==undefined ? item.pulledOn : null;
   const wasFocused = activeFocusItemId()===itemId;
   if(wasFocused) finalizeFocusSession('');
-  const generated = completeItemCore(item);
-  return { item, generatedOccurrenceId: generated ? generated.id : null, priorPulledOn, wasFocused };
+  completeItemCore(item);
+  return { item, priorPulledOn, wasFocused };
 }
 function attemptComplete(itemId){
   const item = state.items.find(i=>i.id===itemId);
@@ -2282,33 +2270,17 @@ function attemptComplete(itemId){
   if(result.wasFocused) focusFabTick(); // the global Focus FAB owns its own idle/running visual state — refresh it now that the session it was tracking just ended
   showToast(`Closed "${label}"`, ()=>undoComplete(result));
 }
-// F1-F5: mirrors the Undo pattern attemptDelete already offers. Reopens the item; if this exact
-// completion generated a next recurrence occurrence that's still untouched (still open, nothing
-// generated from IT yet, and no History/outcome beyond its own creation), that occurrence is
-// removed too, cleanly reversing the whole side effect — but an occurrence the user has since
-// acted on is left alone rather than silently destroyed. If completing this item finalized a
-// running Focus session, that Focus history already happened and is never erased here — Undo
-// just reopens the item, it doesn't rewind or restart the old timer.
+// F1-F5: mirrors the Undo pattern attemptDelete already offers. Reopens the item and restores its
+// prior pulledOn. If completing this item finalized a running Focus session, that Focus history
+// already happened and is never erased here — Undo just reopens the item, it doesn't rewind or
+// restart the old timer.
 function undoComplete(result){
-  const { item, generatedOccurrenceId, priorPulledOn } = result;
+  const { item, priorPulledOn } = result;
   if(!item) return;
   const before = item.status;
   item.status = 'open';
   item.closedAt = null;
   if(item.kind==='priority') item.pulledOn = priorPulledOn;
-  if(generatedOccurrenceId){
-    const gen = state.items.find(i=>i.id===generatedOccurrenceId);
-    if(gen){
-      const genHistory = (state.history||[]).filter(h=>h.itemId===generatedOccurrenceId);
-      const genHasDescendant = state.items.some(i=>i.generatedFromId===generatedOccurrenceId);
-      const genPristine = gen.status==='open' && !genHasDescendant &&
-        genHistory.every(h=>h.type==='created') && (!gen.outcomeLog || gen.outcomeLog.length===0);
-      if(genPristine){
-        state.items.splice(state.items.indexOf(gen),1);
-        state.history = (state.history||[]).filter(h=>h.itemId!==generatedOccurrenceId);
-      }
-    }
-  }
   logHistory(item.id, 'reopened', before, 'open', {source:'undo_complete'});
   commitAndRefresh();
 }
@@ -3755,87 +3727,15 @@ function setDraftSnooze(days){
   editDraft.snoozedUntil = days===0 ? null : snoozeUntilEndOfDay(days);
   renderEditFields();
 }
-// B4: deliberately small first version — None/Daily/Weekly/Monthly, nothing more elaborate.
-const RECURRENCE_OPTIONS = [['none','None'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']];
-function setDraftRecurrence(v){
-  editDraft.recurrence = v;
-  renderEditFields();
-}
-// Only these three are real, persistable recurrence values — the canonical "no recurrence" is
-// null (the UI maps that to the 'none' radio). Referenced by both import normalization (A5) and
-// the generator's own defensive check (A6), so the allowed set is defined exactly once.
+// R5: the Repeat/recurrence feature (Daily/Weekly/Monthly auto-regenerating items on Complete)
+// was removed at the user's request — "I see no reason why a Priority, Decision, or Action needs
+// to be repeated." This constant is the one piece kept: normalizeImportedItem still sanitizes a
+// legacy recurrence value on import (so a backup exported before this removal can't carry an
+// invalid type into state), and findExactOpenItemByText still exempts pre-existing same-series
+// siblings from the duplicate-nag (so a user who already has old recurring items open doesn't see
+// a new false-positive warning). Neither of these can ever apply to a newly-created item — there
+// is no UI to set recurrence anymore, and nothing generates a next occurrence anymore.
 const SUPPORTED_RECURRENCE = ['daily','weekly','monthly'];
-function daysInMonth(year, monthIndex0){ return new Date(year, monthIndex0+1, 0).getDate(); }
-// A3/A4: monthly recurrence anchors to the ORIGINAL intended day-of-month (recurrenceAnchorDay),
-// clamped to whatever the target month actually has — never computed from the previous
-// occurrence's own (possibly already-clamped) date. That's what keeps Jan 31 -> Feb 28 -> Mar 31
-// instead of permanently drifting to 28 after the first clamp (see resolveRecurrenceAnchorDay
-// for how the anchor itself is determined/preserved).
-function advanceRecurrenceDate(dateStr, recurrence, anchorDay){
-  const d = new Date(dateStr+'T00:00:00');
-  const pad = n=>String(n).padStart(2,'0');
-  const toISO = dt => dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate());
-  if(recurrence==='daily'){ d.setDate(d.getDate()+1); return toISO(d); }
-  if(recurrence==='weekly'){ d.setDate(d.getDate()+7); return toISO(d); }
-  if(recurrence==='monthly'){
-    const anchor = Number.isInteger(anchorDay) ? anchorDay : d.getDate();
-    const nextMonthIndex = d.getMonth()+1; // may be 12 — normalized below, never passed straight to `new Date(y, 12, ...)`
-    const y = d.getFullYear() + Math.floor(nextMonthIndex/12);
-    const m = nextMonthIndex % 12;
-    const day = Math.min(anchor, daysInMonth(y, m));
-    return toISO(new Date(y, m, day));
-  }
-  return dateStr; // unsupported recurrence — never advance (generateNextRecurrenceOccurrence already refuses to call this for one, per A6, but stay inert rather than guess if it somehow is)
-}
-// A4: resolves the stable monthly anchor day for an item, preferring (in order) its own stored
-// recurrenceAnchorDay, then the series root's, then the root's Due Date day-of-month, then this
-// occurrence's own Due Date day-of-month. Covers legacy recurring records created before the
-// anchor field existed without corrupting anything — it just derives a sensible one on first use.
-function resolveRecurrenceAnchorDay(item){
-  if(Number.isInteger(item.recurrenceAnchorDay)) return item.recurrenceAnchorDay;
-  const seriesId = item.recurrenceSeriesId || item.id;
-  const root = state.items.find(i=>i.id===seriesId);
-  if(root){
-    if(Number.isInteger(root.recurrenceAnchorDay)) return root.recurrenceAnchorDay;
-    if(root.dueDate) return new Date(root.dueDate+'T00:00:00').getDate();
-  }
-  if(item.dueDate) return new Date(item.dueDate+'T00:00:00').getDate();
-  return 1;
-}
-// The ONE place a next occurrence is ever spawned — called strictly from inside completeItemCore.
-// A9: idempotency is now explicit, not incidental — completing, reopening, and re-completing the
-// SAME occurrence must never produce a second sibling, so this checks for an occurrence already
-// generated from this exact item.id before creating another, regardless of how many times
-// completeItemCore itself runs against it. No due date to advance from means recurrence is simply
-// inert (nothing generated) rather than guessing a date. Carries forward the fields that
-// meaningfully describe "the same recurring thing" (text, tags, kind-specific fields) — never the
-// Outcome Log or a Decision's locked Reasoning, which describe THIS occurrence's own history, not
-// the next one's.
-function generateNextRecurrenceOccurrence(item){
-  if(!item.recurrence || !SUPPORTED_RECURRENCE.includes(item.recurrence)) return null; // A6: defense-in-depth against corrupted/unsupported runtime values
-  if(!item.dueDate) return null;
-  if(state.items.some(i=>i.generatedFromId===item.id)) return null; // A9: already generated once from this exact occurrence — never a second sibling
-  if(!item.recurrenceSeriesId) item.recurrenceSeriesId = item.id; // A7: establish series identity on the root the first time it's actually needed
-  const anchorDay = resolveRecurrenceAnchorDay(item);
-  const occurrenceNumber = Number.isInteger(item.recurrenceOccurrence) ? item.recurrenceOccurrence : 1; // B2
-  if(!Number.isInteger(item.recurrenceOccurrence)) item.recurrenceOccurrence = occurrenceNumber; // backfill a legacy root so the chain has a real starting number
-  const next = {
-    id: uid(), kind: item.kind, text: item.text, outcomeLog: [], status:'open',
-    tags: [...(item.tags||[])], createdAt: nowISO(), closedAt:null, snoozedUntil:null,
-    dueDate: advanceRecurrenceDate(item.dueDate, item.recurrence, anchorDay), links: [],
-    recurrence: item.recurrence,
-    recurrenceAnchorDay: anchorDay,
-    recurrenceSeriesId: item.recurrenceSeriesId,
-    recurrenceOccurrence: occurrenceNumber+1,
-    generatedFromId: item.id
-  };
-  if(item.kind==='priority'){ next.impact=item.impact||null; next.urgency=item.urgency||null; next.pulledOn=null; }
-  if(item.kind==='action'){ next.assignedTo=item.assignedTo||null; }
-  if(item.kind==='decision'){ next.reasoning=''; next.confidence=null; } // a fresh Decision needs its own reasoning — never carries forward a locked judgment
-  state.items.push(next);
-  logHistory(next.id, 'created', null, next.kind, {recurrenceFrom:item.id});
-  return next;
-}
 // Pattern check #1: re-snoozing something that's already overdue, for the 2nd+ time, usually
 // means the due date itself is stale, not that the work genuinely needs another delay. Never
 // blocks — "Snooze anyway" is exactly as easy as before, just no longer the only visible option.
@@ -3869,17 +3769,11 @@ function openEditSheet(itemId, focusOutcome){
   edToggles = {};
   editPromoteKind = null;
   const isClosed = item.status==='closed';
-  editDraft = { itemId, tags: [...(item.tags||[])], snoozedUntil: item.snoozedUntil, snoozeChoice: null, recurrence: item.recurrence||'none' };
+  editDraft = { itemId, tags: [...(item.tags||[])], snoozedUntil: item.snoozedUntil, snoozeChoice: null };
   editOriginal = {
     text: item.text, tags: [...(item.tags||[])], snoozedUntil: item.snoozedUntil,
     assignee: tagName(item.assignedTo)||'', dueDate: item.dueDate||'', reasoning: item.reasoning||'',
-    wasVault: item.kind===null,
-    // A2: snapshotted here, alongside every other editable field, so the dirty comparison never
-    // depends on re-reading the live item (which could itself change while Edit is open) — pure
-    // draft-vs-snapshot, like everything else in this transaction. Normalized to 'none' the same
-    // way editDraft.recurrence is, so null/undefined/'none' (all "no recurrence") never register
-    // as a false difference against each other.
-    recurrence: item.recurrence||'none'
+    wasVault: item.kind===null
   };
   const sheet = document.getElementById('edit-sheet');
   if(isClosed){
@@ -4509,20 +4403,10 @@ function renderEditFields(){
   }
   // Due date / Snooze / Tags are optional enrichment — collapsed under "More details" unless
   // the item already has one of them set, so existing saved data is never hidden by default.
-  // B1: recurrence is functionally inert without a Due Date (see generateNextRecurrenceOccurrence),
-  // so in practice item.dueDate already covers this — but check recurrence explicitly too, so an
-  // edge case (recurrence set on a record that's lost its due date) still surfaces the setting
-  // rather than hiding it inside a collapsed section.
-  const moreOpen = !!item.dueDate || !!editDraft.snoozedUntil || editDraft.tags.length>0 || (editDraft.recurrence && editDraft.recurrence!=='none');
+  const moreOpen = !!item.dueDate || !!editDraft.snoozedUntil || editDraft.tags.length>0;
   extra += `<details class="more-details"${moreOpen?' open':''}><summary></summary><div class="more-details-body">`;
   extra += `<div class="lbl" style="font-size:11px; color:var(--text-3); margin-bottom:4px;">Due date</div>
     <input type="date" id="ed-due" value="${escapeHtml(item.dueDate||'')}">`;
-  // B4: a deliberately small first version — None/Daily/Weekly/Monthly, nothing more elaborate.
-  // Only meaningful with a Due date to actually advance, so it's grouped right under it.
-  extra += `<div class="lbl" style="font-size:11px; color:var(--text-3); margin:10px 0 4px;">Repeat</div>
-    <div class="shape-row" style="margin-top:0;">${RECURRENCE_OPTIONS.map(([v,label])=>
-      `<button type="button" class="shape-btn ${editDraft.recurrence===v?'selected':''}" onclick="setDraftRecurrence('${v}')">${label}</button>`
-    ).join('')}</div>`;
   if(item.status !== 'closed'){
     extra += `<div class="lbl" style="font-size:11px; color:var(--text-3); margin:6px 0 4px;">
       Snooze ${editDraft.snoozedUntil ? `until ${new Date(editDraft.snoozedUntil).toLocaleDateString()}` : '(off)'}
@@ -4571,11 +4455,6 @@ function editHasUnsavedChanges(){
   const tagsChanged = editDraft.tags.length !== editOriginal.tags.length ||
     editDraft.tags.some(t=>!editOriginal.tags.includes(t));
   if(tagsChanged) return true;
-  // A1: Repeat/recurrence is an editable persisted field like any other — changing it and
-  // tapping Back must warn exactly like changing the Due date or Tags would. Both sides were
-  // already normalized to 'none' (never null/undefined) at snapshot/draft-init time, so this is
-  // a plain equality check with no risk of a false positive between null/undefined/'none'.
-  if(editDraft.recurrence !== editOriginal.recurrence) return true;
   return false;
 }
 // The Edit composer's single exit control (header Back — there is no separate Close/Cancel
@@ -4664,7 +4543,7 @@ function commitEditDraftIntoItem(item){
   const before = {
     kind: item.kind, impact: item.impact, urgency: item.urgency,
     assignedTo: item.assignedTo, dueDate: item.dueDate,
-    tags: [...(item.tags||[])], snoozedUntil: item.snoozedUntil, recurrence: item.recurrence||null
+    tags: [...(item.tags||[])], snoozedUntil: item.snoozedUntil
   };
   const snoozeDaysRequested = editDraft.snoozeChoice;
 
@@ -4701,16 +4580,6 @@ function commitEditDraftIntoItem(item){
 
   item.tags = [...editDraft.tags];
   item.snoozedUntil = editDraft.snoozedUntil;
-  item.recurrence = editDraft.recurrence && editDraft.recurrence!=='none' ? editDraft.recurrence : null;
-  // A4: the monthly anchor day tracks the user's INTENT, so it only updates when that intent
-  // actually changes this save — recurrence newly turned on/switched to monthly, or the Due Date
-  // was deliberately edited while already monthly. Simply re-saving an already-clamped generated
-  // occurrence (e.g. the Feb 28 child of a Jan 31 series) untouched must NOT reset the anchor
-  // down to 28 — that's exactly the drift A4 exists to prevent.
-  if(item.recurrence==='monthly' && item.dueDate &&
-     (before.dueDate!==item.dueDate || before.recurrence!=='monthly' || !Number.isInteger(item.recurrenceAnchorDay))){
-    item.recurrenceAnchorDay = new Date(item.dueDate+'T00:00:00').getDate();
-  }
 
   if(outcomeText.trim()){ item.outcomeLog = item.outcomeLog||[]; item.outcomeLog.push({text:outcomeText.trim(), at: nowISO()}); }
 
