@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Mandoos Console</title>
+<!-- R10: installable PWA — manifest + icons + theme-color. These three files (manifest.json,
+     sw.js, and the icon-*.png files) must be deployed alongside this HTML file, in the same
+     folder, for installability and the Service Worker to work — see sw.js's own header comment. -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#12161F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mandoos">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
@@ -159,6 +169,10 @@
   }
   .card-focus-btn.locked:hover{ opacity:.35; color:var(--text-3); }
   .rollup{font-size:11px; color:var(--text-3); margin-top:4px;}
+  /* R9: a gentle behavioral-pattern nudge (Chronic Avoidance/Focus Neglect/long-open-Decision) —
+     a touch more present than the default faint rollup line, since it's meant to actually catch
+     the eye at the moment it's useful, but never alarming (no danger-red). */
+  .rollup.behavior-hint{color:var(--text-2); font-weight:500;}
   .rollup a{color:var(--text-2); text-decoration:underline; cursor:pointer;}
 
   .legend{display:flex; gap:6px; flex-wrap:wrap; margin:2px 0 12px;}
@@ -527,6 +541,13 @@
     </div>
     <div id="github-sync-fields"></div>
     <div id="github-sync-status" style="font-size:11.5px; color:var(--text-3); margin-top:8px;"></div>
+
+    <div class="section-sub" style="margin-top:26px;">Notifications</div>
+    <div style="font-size:12.5px; color:var(--text-3); margin-bottom:10px; line-height:1.5;">
+      Turns the existing due-items reminder into a real notification when the app is open or just reopened.
+      This does not reach you while the app has been closed for a while — that would need a server, which Mandoos doesn't have.
+    </div>
+    <div id="notification-fields"></div>
 
     <div class="section-sub" style="margin-top:26px;">Help</div>
     <button class="btn ghost" style="width:100%; box-sizing:border-box;" onclick="openHelpSheet()">Help &amp; Guide</button>
@@ -1054,8 +1075,17 @@ let githubSyncConfig = loadGithubSyncConfig();
 // every individual call site, is the simplest invalidation that's still actually correct.
 let backupStatsCache = null;
 let backupStatsDirty = true;
+// R9: same dirty-flag-via-save() pattern as backupStatsDirty — backs getBehaviorHints() below,
+// which drives the in-flow Chronic Avoidance/Focus Neglect/long-open-Decision card hints.
+// computeChronicAvoidance/computeFocusNeglect/computeDecisionRecord are each an O(items ×
+// history) scan; calling them fresh on every single card render (Today + Log fire this via
+// renderItemRow on nearly every mutation) would be wasteful — compute once, reuse until
+// something actually changes.
+let behaviorHintsCache = null;
+let behaviorHintsDirty = true;
 function save(){
   backupStatsDirty = true;
+  behaviorHintsDirty = true;
   // R7: same chokepoint-piggyback as backupStatsDirty above — every real mutation passes
   // through save(), so bumping this counter (into GitHub Sync's own separate, non-exported
   // config) is what lets the Setup status line tell you whether what you're looking at right now
@@ -2251,6 +2281,46 @@ function buildMetaPills(item, hf){
 // the match actually lives — but only when the query wouldn't already be obvious from what's
 // already visible on the card (the headline/points), and at most one line even if multiple
 // Outcome Log entries happen to match.
+// R9: feeds the Chronic Avoidance / Focus Neglect / long-open-Decision card hints — the exact
+// same three signals Analysis's own report sections already compute (computeChronicAvoidance,
+// computeFocusNeglect, computeDecisionRecord's openLong), just relocated to where the behavior
+// actually happens (a card you're about to pull, snooze, or skip again) instead of a separate
+// screen you have to remember to open.
+// Focus Neglect is NOT a third independent hint type: computeFocusNeglect's own criteria
+// (kind==='priority' && pullDays>=3 && 0 Focus minutes) is strictly a SUBSET of what Chronic
+// Avoidance already flags (which includes that exact same pullDays>=3 condition) — any item that
+// qualifies for neglect therefore always already qualifies for avoidance too, on a priority. So
+// rather than a neglect hint that could structurally never win against avoidance, its one real
+// piece of extra information ("0m focused") is folded directly into the avoidance hint's own
+// text when it applies — richer, not shadowed. A long-open Decision is a separate, unrelated
+// condition (kind==='decision'), so it still gets its own independent hint.
+function getBehaviorHints(){
+  if(!behaviorHintsDirty && behaviorHintsCache) return behaviorHintsCache;
+  const map = new Map();
+  const neglectedIds = new Set(computeFocusNeglect().map(i=>i.id));
+  computeChronicAvoidance().forEach(({item, snoozeCount, pullDays})=>{
+    map.set(item.id, { type:'avoidance', snoozeCount, pullDays, neglected: neglectedIds.has(item.id) });
+  });
+  computeDecisionRecord().openLong.forEach(({item, days})=>{
+    if(!map.has(item.id)) map.set(item.id, { type:'decision_open_long', days });
+  });
+  behaviorHintsCache = map;
+  behaviorHintsDirty = false;
+  return map;
+}
+function buildBehaviorHintHtml(item){
+  const h = getBehaviorHints().get(item.id);
+  if(!h) return '';
+  if(h.type==='avoidance'){
+    const bits = [];
+    if(h.snoozeCount>=2) bits.push(`snoozed ${h.snoozeCount}×`);
+    if(h.pullDays>=3) bits.push(`pulled ${h.pullDays} days`);
+    if(h.neglected) bits.push('0m focused');
+    return `<div class="rollup behavior-hint">⟳ ${bits.join(' · ')}</div>`;
+  }
+  // decision_open_long
+  return `<div class="rollup behavior-hint">⏳ Open ${h.days} day${h.days===1?'':'s'} — still undecided</div>`;
+}
 function buildOutcomeMatchHint(item, hf){
   const needles = (hf && hf.text && hf.text.length) ? hf.text : null;
   if(!needles) return '';
@@ -2285,6 +2355,7 @@ function renderItemRow(item, opts){
     rollupHtml += `<div class="rollup">from: ${src ? src.text.slice(0,40) : '(deleted item)'}</div>`;
   }
   rollupHtml += buildOutcomeMatchHint(item, hf);
+  if(!isClosed) rollupHtml += buildBehaviorHintHtml(item); // R9: Chronic Avoidance/Focus Neglect/long-open-Decision — only ever meaningful on something still open
 
   const canDel = isClosed ? false : canDeleteItem(item.id);
   const canComp = isClosed ? false : canCompleteItem(item.id);
@@ -5393,23 +5464,55 @@ function initDayRolloverWatch(){
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ checkDayRollover(); maybeShowDueTodayReminder(); } });
 }
 
-/* ---------- due-items reminder (B2) ----------
-   FEASIBILITY: Mandoos is a single self-contained HTML file with no server, no manifest, and no
-   registered Service Worker. A notification that can arrive while the app/tab is actually
-   CLOSED requires a Service Worker (for the Notifications/Push API's background delivery path);
-   Service Workers cannot be registered from a file:// origin at all (browsers require a secure,
-   http(s)-served context), and even served over https, actually receiving a push while closed
-   needs a Web Push backend (VAPID keys, a server to trigger it) this app has none of. So:
-   reliable background/closed-app notifications are NOT technically supported in Mandoos's
-   actual deployment — implementing Notification.requestPermission()-style code here would only
-   ever fire while the tab is already open, which is not what "notification" honestly promises.
-   What's implemented instead, per the "don't build a misleading feature" rule: a plainly
-   in-app-only due-items reminder — a toast, nothing more — shown at most once per calendar day,
-   when the app is opened fresh or when it regains foreground (the closest honest equivalent to
-   "the user just picked their phone/tab back up"). notifiedFor-style ledger (dueReminderShownFor)
-   prevents repeats within the same day. If Mandoos is ever deployed as a real hosted PWA with a
-   manifest + Service Worker + push backend, this is the one function that would need replacing
-   with the real Notifications API call — everything else (the count, the once-a-day gate) stays.
+// R10: registers the Service Worker for installability ("Add to Home Screen") + basic offline
+// support — see sw.js's own header comment for the caching strategy. Wrapped defensively:
+// registration can legitimately fail or be unsupported (older browsers, a non-secure origin
+// other than localhost) and must never break the app itself if it does.
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+// R10: real OS-level notification permission, gated behind an explicit Setup toggle — never
+// auto-prompted on load (that tanks opt-in rates and risks the browser silently auto-blocking
+// future prompts if ignored). notificationPermissionStatus reads defensively since `Notification`
+// doesn't exist in every context (e.g. non-secure origins, some embedded webviews).
+function notificationPermissionStatus(){
+  if(typeof Notification==='undefined') return 'unsupported';
+  return Notification.permission; // 'default' | 'granted' | 'denied'
+}
+function requestNotificationPermission(){
+  if(typeof Notification==='undefined'){ showToast('Notifications aren’t supported in this browser.', null); return; }
+  Notification.requestPermission().then(()=>{ renderSetup(); });
+}
+// Browsers never let a page programmatically revoke permission once granted, and never re-show
+// the prompt once denied (requestPermission() just immediately re-resolves 'denied' with no UI)
+// — so each status gets its own honest, non-actionable-where-it-can't-be-actioned rendering.
+function renderNotificationFields(){
+  const wrap = document.getElementById('notification-fields');
+  if(!wrap) return;
+  const status = notificationPermissionStatus();
+  if(status==='unsupported'){
+    wrap.innerHTML = `<div style="font-size:12.5px; color:var(--text-3);">Not supported in this browser.</div>`;
+  } else if(status==='granted'){
+    wrap.innerHTML = `<div style="font-size:12.5px; color:var(--olive);">✓ Notifications enabled</div>`;
+  } else if(status==='denied'){
+    wrap.innerHTML = `<div style="font-size:12.5px; color:var(--text-3);">Blocked — allow notifications for this site in your browser's settings to turn this on.</div>`;
+  } else {
+    wrap.innerHTML = `<button class="btn ghost" style="width:100%; box-sizing:border-box;" onclick="requestNotificationPermission()">Enable Notifications</button>`;
+  }
+}
+/* ---------- due-items reminder (B2/R10) ----------
+   FEASIBILITY, still true even after R10 (manifest + Service Worker): a notification that
+   arrives while the app/tab is fully CLOSED for days requires a Web Push backend (VAPID keys, a
+   server to trigger it) — Mandoos has none, by design (no backend at all). The Service Worker
+   registered above only gets Mandoos installability + offline caching; it does NOT, by itself,
+   grant background push delivery. So this reminder is still honestly scoped: it fires at most
+   once per calendar day, only when the app is opened fresh or regains foreground (the closest
+   honest equivalent to "the user just picked their phone/tab back up") — never while genuinely
+   closed. What R10 changes is WHAT fires at that moment: previously just an in-app toast;
+   now, when notification permission has been explicitly granted (see the Setup toggle), a real
+   OS-level Notification fires alongside the toast — louder and harder to miss in that same
+   moment, not a new "reaches you while closed" capability.
 */
 function dueTodayReminderCount(){
   return openItems().filter(i=> !isSnoozed(i) && i.dueDate && isDueUrgent(i.dueDate)).length;
@@ -5420,7 +5523,11 @@ function maybeShowDueTodayReminder(){
   if(state.settings.dueReminderShownFor===todayStr()) return; // once per day
   state.settings.dueReminderShownFor = todayStr();
   save();
-  showToast(`${n} item${n===1?'':'s'} due today or overdue`, null);
+  const msg = `${n} item${n===1?'':'s'} due today or overdue`;
+  showToast(msg, null);
+  if(notificationPermissionStatus()==='granted'){
+    try{ new Notification('Mandoos', { body: msg, icon: 'icon-192.png' }); }catch(e){} // never let a Notification construction failure break the in-app toast path above
+  }
 }
 
 // B3: how many top-ranked Priorities Today pulls in at once — was hard-coded to 3. Bounded to a
@@ -5498,7 +5605,7 @@ function renderBackupStats(){
   }
   el.innerHTML = backupStatsCache;
 }
-function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); renderGithubSyncFields(); }
+function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); renderGithubSyncFields(); renderNotificationFields(); }
 function renderAll(){
   renderToday();
   renderLogChips();
@@ -5536,6 +5643,7 @@ initPullToRefresh();
 initTabSwipeNav();
 initDayRolloverWatch();
 initGithubSyncNudge(); // R8: automatic background check + dismissible nudge on load and on returning from 15+ min idle
+registerServiceWorker(); // R10: installability + offline support
 maybeShowDueTodayReminder();
 syncComposerViewportHeight();
 if(window.visualViewport){
