@@ -506,8 +506,8 @@
 
     <div class="section-sub" style="margin-top:26px;">Backup</div>
     <div style="font-size:12.5px; color:var(--text-3); margin-bottom:12px; line-height:1.5;">
-      Mandoos lives only in this browser — nothing syncs anywhere. Export a backup regularly, especially before
-      clearing browser data or switching devices.
+      Mandoos lives only in this browser by default. Export a backup regularly, especially before
+      clearing browser data or switching devices — or set up GitHub Sync below to carry data between devices.
     </div>
     <div style="display:flex; gap:10px;">
       <button class="btn ghost" onclick="exportData()">Export backup</button>
@@ -519,6 +519,14 @@
     </div>
     <div id="backup-health" style="font-size:11.5px; margin-top:10px;"></div>
     <div id="backup-stats" style="font-size:11.5px; color:var(--text-3); margin-top:8px; line-height:1.6;"></div>
+
+    <div class="section-sub" style="margin-top:26px;">GitHub Sync</div>
+    <div style="font-size:12.5px; color:var(--text-3); margin-bottom:10px; line-height:1.5;">
+      Manually sync this device with a secret Gist you control, so another device can pick up where you left off.
+      Your access token is stored only in this browser — it is never included in Export backup or in the data that gets synced.
+    </div>
+    <div id="github-sync-fields"></div>
+    <div id="github-sync-status" style="font-size:11.5px; color:var(--text-3); margin-top:8px;"></div>
 
     <div class="section-sub" style="margin-top:26px;">Help</div>
     <button class="btn ghost" style="width:100%; box-sizing:border-box;" onclick="openHelpSheet()">Help &amp; Guide</button>
@@ -1289,6 +1297,182 @@ function importDataFile(file){
       ()=> applyImportedState(parsed), 'Import', 'Cancel', null, true); // C6: genuinely consequential — replaces all local data — gets the distinct destructive styling, not the routine accent look
   };
   reader.readAsText(file);
+}
+
+/* ---------- GitHub Sync (manual, via a secret Gist) ----------
+   R6: the Gist ID and access token are deliberately kept OUTSIDE `state` — in their own
+   localStorage key — so they can never leak through Export backup, and so the payload actually
+   written to the Gist (serializeState(), the same function Export already uses) never contains
+   its own access credential. Sync is manual-only (no auto-sync, no background polling): the user
+   taps "Sync now", and this reuses the exact same validated pull path (applyImportedState) and
+   push payload (serializeState) that local backup import/export already use — never a second,
+   parallel serialization/validation implementation. */
+const GITHUB_SYNC_KEY = 'mandoos_github_sync';
+const GITHUB_API = 'https://api.github.com';
+function loadGithubSyncConfig(){
+  try{
+    const raw = localStorage.getItem(GITHUB_SYNC_KEY);
+    const cfg = raw ? JSON.parse(raw) : null;
+    if(cfg && typeof cfg==='object'){
+      return {
+        gistId: typeof cfg.gistId==='string' ? cfg.gistId : '',
+        token: typeof cfg.token==='string' ? cfg.token : '',
+        filename: typeof cfg.filename==='string' && cfg.filename ? cfg.filename : 'mandoos-state.json',
+        lastSyncedAt: typeof cfg.lastSyncedAt==='string' ? cfg.lastSyncedAt : null,
+        lastSyncedRemoteUpdatedAt: typeof cfg.lastSyncedRemoteUpdatedAt==='string' ? cfg.lastSyncedRemoteUpdatedAt : null
+      };
+    }
+  }catch(e){}
+  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null };
+}
+function saveGithubSyncConfig(cfg){
+  try{ localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(cfg)); }catch(e){}
+}
+let githubSyncConfig = loadGithubSyncConfig();
+function githubAuthHeaders(token){
+  return { 'Authorization': 'token '+token, 'Accept': 'application/vnd.github+json' };
+}
+function githubApiErrorMessage(status){
+  if(status===401) return 'Your GitHub token was rejected — it may be invalid or expired.';
+  if(status===404) return 'Gist not found — check the Gist ID.';
+  if(status===403) return 'GitHub blocked the request (rate limit or token scope) — try again shortly.';
+  return 'GitHub returned an error (status '+status+').';
+}
+// Tolerates a Gist whose single file isn't named exactly what we expect (e.g. the user typed a
+// slightly different filename when creating it) by falling back to "the only file in the Gist" —
+// and handles the API's own truncation of large file content via its raw_url.
+async function fetchGistFileContent(gistId, token, preferredFilename){
+  const res = await fetch(`${GITHUB_API}/gists/${encodeURIComponent(gistId)}`, { headers: githubAuthHeaders(token) });
+  if(!res.ok) throw new Error(githubApiErrorMessage(res.status));
+  const gist = await res.json();
+  const files = gist.files || {};
+  let filename = preferredFilename;
+  let file = files[filename];
+  if(!file){
+    const names = Object.keys(files);
+    if(names.length===1){ filename = names[0]; file = files[filename]; }
+  }
+  if(!file) throw new Error(`No file named "${preferredFilename}" was found in that Gist.`);
+  let content = file.content || '';
+  if(file.truncated && file.raw_url){
+    const rawRes = await fetch(file.raw_url);
+    if(!rawRes.ok) throw new Error('Could not fetch the full Gist content.');
+    content = await rawRes.text();
+  }
+  return { content, updatedAt: gist.updated_at, filename };
+}
+async function pushStateToGist(gistId, token, filename, jsonText){
+  const res = await fetch(`${GITHUB_API}/gists/${encodeURIComponent(gistId)}`, {
+    method: 'PATCH',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, githubAuthHeaders(token)),
+    body: JSON.stringify({ files: { [filename]: { content: jsonText } } })
+  });
+  if(!res.ok) throw new Error(githubApiErrorMessage(res.status));
+  const gist = await res.json();
+  return { updatedAt: gist.updated_at };
+}
+function connectGithubSync(){
+  const gistId = (document.getElementById('gh-gist-id').value||'').trim();
+  const token = (document.getElementById('gh-token').value||'').trim();
+  if(!gistId || !token){ showToast('Enter both the Gist ID and your access token', null); return; }
+  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null };
+  saveGithubSyncConfig(githubSyncConfig);
+  renderGithubSyncFields();
+  showToast('Connected — tap "Sync now" to sync', null);
+}
+function disconnectGithubSync(){
+  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null };
+  saveGithubSyncConfig(githubSyncConfig);
+  renderGithubSyncFields();
+  showToast('Disconnected. Your Mandoos data is untouched — revoke the token on GitHub if you also want to cut off access there.', null);
+}
+function setGithubSyncStatusText(text){
+  const el = document.getElementById('github-sync-status');
+  if(el) el.textContent = text;
+}
+// The one entry point ("Sync now"). Always fetches the Gist first, then decides: first-ever-sync
+// against a Gist that already has real data, or the Gist having changed since this device last
+// touched it, both mean someone else's data could be sitting there — stop and let the user choose
+// which side wins rather than silently overwriting either one. Otherwise, just push.
+async function githubSyncNow(){
+  const cfg = githubSyncConfig;
+  if(!cfg.gistId || !cfg.token){ showToast('Connect to a Gist first', null); return; }
+  setGithubSyncStatusText('Syncing…');
+  let remote;
+  try{
+    remote = await fetchGistFileContent(cfg.gistId, cfg.token, cfg.filename);
+  }catch(err){
+    renderGithubSyncFields();
+    showToast('Sync failed: '+err.message, null);
+    return;
+  }
+  cfg.filename = remote.filename; // adopt whatever file the Gist actually uses, going forward
+  let remoteParsed = null;
+  try{ remoteParsed = remote.content ? JSON.parse(remote.content) : null; }catch(e){ remoteParsed = null; }
+  const remoteHasRealData = !!(remoteParsed && Array.isArray(remoteParsed.items) && remoteParsed.items.length>0);
+  const isFirstSyncEver = !cfg.lastSyncedAt;
+  const remoteChangedSinceLastSync = !!cfg.lastSyncedRemoteUpdatedAt && remote.updatedAt !== cfg.lastSyncedRemoteUpdatedAt;
+
+  if((isFirstSyncEver && remoteHasRealData) || remoteChangedSinceLastSync){
+    renderGithubSyncFields();
+    const msg = isFirstSyncEver
+      ? 'This Gist already has data on it (likely from another device). Keep this device’s data (overwrite the Gist), or use the Gist’s data (overwrite this device)?'
+      : 'The Gist has changed since this device last synced. Keep this device’s data (overwrite the Gist), or use the Gist’s data (overwrite this device)?';
+    showConfirm(msg, ()=>githubPushNow(cfg), 'Keep This Device', 'Use Gist Data', ()=>githubPullNow(cfg, remoteParsed, remote.updatedAt));
+    return;
+  }
+  await githubPushNow(cfg);
+}
+async function githubPushNow(cfg){
+  setGithubSyncStatusText('Syncing…');
+  try{
+    const jsonText = serializeState(); // same payload Export backup already produces — the token itself is never part of it
+    const result = await pushStateToGist(cfg.gistId, cfg.token, cfg.filename, jsonText);
+    cfg.lastSyncedRemoteUpdatedAt = result.updatedAt;
+    cfg.lastSyncedAt = nowISO();
+    saveGithubSyncConfig(cfg);
+    renderGithubSyncFields();
+    showToast('Synced — this device’s data is now on the Gist', null);
+  }catch(err){
+    renderGithubSyncFields();
+    showToast('Sync failed: '+err.message, null);
+  }
+}
+function githubPullNow(cfg, remoteParsed, remoteUpdatedAt){
+  if(!remoteParsed || !validImportShape(remoteParsed)){
+    renderGithubSyncFields();
+    showToast('The Gist’s data doesn’t look like a valid Mandoos backup', null);
+    return;
+  }
+  const ok = applyImportedState(remoteParsed); // same validated/normalized/migrated path local Import backup uses
+  if(ok){
+    cfg.lastSyncedRemoteUpdatedAt = remoteUpdatedAt;
+    cfg.lastSyncedAt = nowISO();
+    saveGithubSyncConfig(cfg);
+  }
+  renderGithubSyncFields();
+}
+function renderGithubSyncFields(){
+  const wrap = document.getElementById('github-sync-fields');
+  if(!wrap) return;
+  const cfg = githubSyncConfig;
+  if(!cfg.gistId || !cfg.token){
+    wrap.innerHTML = `
+      <input type="text" id="gh-gist-id" placeholder="Gist ID" style="width:100%; border:0.5px solid var(--border);
+        border-radius:var(--radius); padding:8px 12px; font-size:13px; background:var(--surface); margin-bottom:8px;">
+      <input type="password" id="gh-token" placeholder="Access token (gist scope)" style="width:100%; border:0.5px solid var(--border);
+        border-radius:var(--radius); padding:8px 12px; font-size:13px; background:var(--surface); margin-bottom:8px;">
+      <button class="btn primary" style="width:100%; box-sizing:border-box;" onclick="connectGithubSync()">Connect</button>`;
+    setGithubSyncStatusText('Not connected.');
+  } else {
+    wrap.innerHTML = `
+      <div style="display:flex; gap:10px;">
+        <button class="btn primary" style="flex:1;" onclick="githubSyncNow()">Sync now</button>
+        <button class="btn ghost" style="flex:1;" onclick="disconnectGithubSync()">Disconnect</button>
+      </div>`;
+    const lastSynced = cfg.lastSyncedAt ? new Date(cfg.lastSyncedAt).toLocaleString() : 'never';
+    setGithubSyncStatusText(`Connected to Gist ${cfg.gistId.slice(0,8)}… · Last synced: ${lastSynced}`);
+  }
 }
 
 /* ---------- branded confirm dialog (replaces native confirm() everywhere) ---------- */
@@ -5222,7 +5406,7 @@ function renderBackupStats(){
   }
   el.innerHTML = backupStatsCache;
 }
-function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); }
+function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); renderGithubSyncFields(); }
 function renderAll(){
   renderToday();
   renderLogChips();
