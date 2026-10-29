@@ -1011,6 +1011,40 @@ function loadState(){
   }catch(e){ storageOK = false; return memFallback; }
 }
 let state = loadState();
+// GitHub Sync's own connection info — deliberately a SEPARATE localStorage key from `state`
+// (never exported, never part of the Gist payload itself; see the full GitHub Sync comment
+// further down). Declared up here, before save(), because save() below needs to bump
+// localChangeSeq on every real mutation — the same "is the Gist in sync with what's actually on
+// screen right now" the GitHub Sync status line answers (R7).
+// R7: localChangeSeq/syncedSeq are a monotonic COUNTER, not timestamps, deliberately — two
+// nowISO() calls close enough together (a sync immediately followed by an edit, which a fast
+// manual workflow can genuinely produce) can land in the same millisecond and compare equal,
+// which would wrongly read as "still synced." An incrementing integer can never collide like
+// that: syncedSeq is stamped with whatever localChangeSeq was AT THE MOMENT a push/pull last
+// captured it, so any save() after that point is unambiguously ahead of it.
+const GITHUB_SYNC_KEY = 'mandoos_github_sync';
+function loadGithubSyncConfig(){
+  try{
+    const raw = localStorage.getItem(GITHUB_SYNC_KEY);
+    const cfg = raw ? JSON.parse(raw) : null;
+    if(cfg && typeof cfg==='object'){
+      return {
+        gistId: typeof cfg.gistId==='string' ? cfg.gistId : '',
+        token: typeof cfg.token==='string' ? cfg.token : '',
+        filename: typeof cfg.filename==='string' && cfg.filename ? cfg.filename : 'mandoos-state.json',
+        lastSyncedAt: typeof cfg.lastSyncedAt==='string' ? cfg.lastSyncedAt : null,
+        lastSyncedRemoteUpdatedAt: typeof cfg.lastSyncedRemoteUpdatedAt==='string' ? cfg.lastSyncedRemoteUpdatedAt : null,
+        localChangeSeq: Number.isFinite(cfg.localChangeSeq) ? cfg.localChangeSeq : 0,
+        syncedSeq: Number.isFinite(cfg.syncedSeq) ? cfg.syncedSeq : 0
+      };
+    }
+  }catch(e){}
+  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq:0, syncedSeq:0 };
+}
+function saveGithubSyncConfig(cfg){
+  try{ localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(cfg)); }catch(e){}
+}
+let githubSyncConfig = loadGithubSyncConfig();
 // R4-C1: backupStatsDirty/backupStatsCache back renderBackupStats() below — an explicit flag
 // rather than relying on object identity (state is mutated in place everywhere, so a
 // reference-equality check would never see a change). save() is already the one chokepoint
@@ -1022,6 +1056,14 @@ let backupStatsCache = null;
 let backupStatsDirty = true;
 function save(){
   backupStatsDirty = true;
+  // R7: same chokepoint-piggyback as backupStatsDirty above — every real mutation passes
+  // through save(), so bumping this counter (into GitHub Sync's own separate, non-exported
+  // config) is what lets the Setup status line tell you whether what you're looking at right now
+  // still matches the last successful sync, or has moved on since. Tracked unconditionally
+  // (cheap) even when Sync was never connected, so connecting later still shows an honest
+  // "unsynced" state for pre-existing local changes.
+  githubSyncConfig.localChangeSeq = (githubSyncConfig.localChangeSeq||0) + 1;
+  saveGithubSyncConfig(githubSyncConfig);
   try{
     localStorage.setItem('mandoos_state', JSON.stringify(state));
     if(!storageOK){ storageOK = true; showToast('Storage is available again — changes are saving normally.', null); }
@@ -1307,28 +1349,7 @@ function importDataFile(file){
    taps "Sync now", and this reuses the exact same validated pull path (applyImportedState) and
    push payload (serializeState) that local backup import/export already use — never a second,
    parallel serialization/validation implementation. */
-const GITHUB_SYNC_KEY = 'mandoos_github_sync';
 const GITHUB_API = 'https://api.github.com';
-function loadGithubSyncConfig(){
-  try{
-    const raw = localStorage.getItem(GITHUB_SYNC_KEY);
-    const cfg = raw ? JSON.parse(raw) : null;
-    if(cfg && typeof cfg==='object'){
-      return {
-        gistId: typeof cfg.gistId==='string' ? cfg.gistId : '',
-        token: typeof cfg.token==='string' ? cfg.token : '',
-        filename: typeof cfg.filename==='string' && cfg.filename ? cfg.filename : 'mandoos-state.json',
-        lastSyncedAt: typeof cfg.lastSyncedAt==='string' ? cfg.lastSyncedAt : null,
-        lastSyncedRemoteUpdatedAt: typeof cfg.lastSyncedRemoteUpdatedAt==='string' ? cfg.lastSyncedRemoteUpdatedAt : null
-      };
-    }
-  }catch(e){}
-  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null };
-}
-function saveGithubSyncConfig(cfg){
-  try{ localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(cfg)); }catch(e){}
-}
-let githubSyncConfig = loadGithubSyncConfig();
 function githubAuthHeaders(token){
   return { 'Authorization': 'token '+token, 'Accept': 'application/vnd.github+json' };
 }
@@ -1375,16 +1396,28 @@ function connectGithubSync(){
   const gistId = (document.getElementById('gh-gist-id').value||'').trim();
   const token = (document.getElementById('gh-token').value||'').trim();
   if(!gistId || !token){ showToast('Enter both the Gist ID and your access token', null); return; }
-  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null };
+  // Connecting doesn't touch `state`, so it never counts as a local change — preserve whatever
+  // localChangeSeq already tracked (pre-existing local edits correctly still read as unsynced).
+  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: 0 };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Connected — tap "Sync now" to sync', null);
 }
 function disconnectGithubSync(){
-  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null };
+  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: githubSyncConfig.syncedSeq };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Disconnected. Your Mandoos data is untouched — revoke the token on GitHub if you also want to cut off access there.', null);
+}
+// R7: answers "is what I'm looking at right now the same as what's on the Gist?" — compares the
+// localChangeSeq counter against whatever value a push/pull last captured it as (syncedSeq). Not
+// connected is reported as "not dirty" since there's nothing to compare against — the UI shows
+// "Not connected" instead of a stale synced/unsynced claim in that case.
+function isGithubSyncDirty(){
+  const cfg = githubSyncConfig;
+  if(!cfg.gistId || !cfg.token) return false;
+  if(!cfg.lastSyncedAt) return true; // connected, but has never actually completed a sync yet
+  return cfg.localChangeSeq > cfg.syncedSeq;
 }
 function setGithubSyncStatusText(text){
   const el = document.getElementById('github-sync-status');
@@ -1425,11 +1458,16 @@ async function githubSyncNow(){
 }
 async function githubPushNow(cfg){
   setGithubSyncStatusText('Syncing…');
+  // R7: snapshot the seq BEFORE the network round-trip — if a save() happens while the PATCH is
+  // in flight, that change was NOT part of what actually got pushed, so it must still read as
+  // dirty afterward. Capturing after the await would wrongly mark it synced.
+  const seqAtPushTime = cfg.localChangeSeq;
   try{
     const jsonText = serializeState(); // same payload Export backup already produces — the token itself is never part of it
     const result = await pushStateToGist(cfg.gistId, cfg.token, cfg.filename, jsonText);
     cfg.lastSyncedRemoteUpdatedAt = result.updatedAt;
     cfg.lastSyncedAt = nowISO();
+    cfg.syncedSeq = seqAtPushTime;
     saveGithubSyncConfig(cfg);
     renderGithubSyncFields();
     showToast('Synced — this device’s data is now on the Gist', null);
@@ -1444,8 +1482,9 @@ function githubPullNow(cfg, remoteParsed, remoteUpdatedAt){
     showToast('The Gist’s data doesn’t look like a valid Mandoos backup', null);
     return;
   }
-  const ok = applyImportedState(remoteParsed); // same validated/normalized/migrated path local Import backup uses
+  const ok = applyImportedState(remoteParsed); // same validated/normalized/migrated path local Import backup uses; this itself calls save(), bumping localChangeSeq
   if(ok){
+    cfg.syncedSeq = cfg.localChangeSeq; // local now exactly matches what was just pulled — synced as of right now
     cfg.lastSyncedRemoteUpdatedAt = remoteUpdatedAt;
     cfg.lastSyncedAt = nowISO();
     saveGithubSyncConfig(cfg);
@@ -1471,8 +1510,55 @@ function renderGithubSyncFields(){
         <button class="btn ghost" style="flex:1;" onclick="disconnectGithubSync()">Disconnect</button>
       </div>`;
     const lastSynced = cfg.lastSyncedAt ? new Date(cfg.lastSyncedAt).toLocaleString() : 'never';
-    setGithubSyncStatusText(`Connected to Gist ${cfg.gistId.slice(0,8)}… · Last synced: ${lastSynced}`);
+    // R7: this is the live answer to "is what I'm looking at synced, or just this browser's
+    // copy?" — re-evaluated on every render (and renderSetup() already fires on nearly every
+    // mutation via commitAndRefresh), so it reflects the current moment, not just whenever the
+    // last sync happened to run.
+    const dirtyLabel = isGithubSyncDirty() ? '⚠ Unsynced changes on this device' : '✓ Synced with the Gist';
+    setGithubSyncStatusText(`Connected to Gist ${cfg.gistId.slice(0,8)}… · ${dirtyLabel} · Last synced: ${lastSynced}`);
   }
+}
+
+// R8: automatic background check + dismissible nudge — NOT an automatic sync, NOT a forced
+// prompt. Checked on two moments: a fresh page load, and the tab coming back to the foreground
+// after being hidden for GITHUB_SYNC_NUDGE_IDLE_MS or longer (mobile browsers suspend JS timers
+// while backgrounded, so a literal running "idle timer" can't be relied on — instead this just
+// stamps when the tab went hidden and compares elapsed wall-clock time on return). A remote
+// change is always worth surfacing either way, since it's new information the user genuinely
+// couldn't have known; "you have unsynced local changes" only nudges on the resume-after-idle
+// case, not on every fresh load, so merely reopening the app a few seconds after an edit doesn't
+// immediately nag. Tapping the toast's action routes through the exact same githubSyncNow() a
+// manual tap already uses — same conflict handling, nothing new to maintain.
+const GITHUB_SYNC_NUDGE_IDLE_MS = 15*60*1000;
+let githubSyncNudgeHiddenAt = null;
+async function checkForNewerGistData(reason){
+  const cfg = githubSyncConfig;
+  if(!cfg.gistId || !cfg.token) return; // not connected — nothing to check, nothing to nudge about
+  let remoteChanged = false;
+  try{
+    const remote = await fetchGistFileContent(cfg.gistId, cfg.token, cfg.filename);
+    remoteChanged = !!cfg.lastSyncedRemoteUpdatedAt && remote.updatedAt !== cfg.lastSyncedRemoteUpdatedAt;
+  }catch(e){
+    return; // a background check failing (offline, revoked token, etc.) must never alarm the user — errors only surface on an explicit manual Sync tap
+  }
+  if(remoteChanged){
+    showToast('Newer data is available on your Gist.', ()=>githubSyncNow(), 'Sync now');
+  } else if(reason==='resume' && cfg.lastSyncedAt && isGithubSyncDirty()){
+    showToast('You have unsynced changes on this device.', ()=>githubSyncNow(), 'Sync now');
+  }
+}
+function initGithubSyncNudge(){
+  checkForNewerGistData('load');
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){
+      githubSyncNudgeHiddenAt = Date.now();
+    } else {
+      if(githubSyncNudgeHiddenAt!==null && (Date.now()-githubSyncNudgeHiddenAt) >= GITHUB_SYNC_NUDGE_IDLE_MS){
+        checkForNewerGistData('resume');
+      }
+      githubSyncNudgeHiddenAt = null;
+    }
+  });
 }
 
 /* ---------- branded confirm dialog (replaces native confirm() everywhere) ---------- */
@@ -2498,9 +2584,15 @@ function attemptDelete(itemId, onUndo){
 }
 
 let toastTimer=null;
-function showToast(msg, undoFn){
+// R8: actionLabel is optional and defaults to 'Undo' — every existing 2-arg call site
+// (showToast(msg, fn)) keeps behaving exactly as before. Added so the GitHub Sync nudge can
+// reuse this exact same toast+action mechanism with a label that actually describes its action
+// ("Sync now") instead of a misleading "Undo" on a button that doesn't undo anything. The global
+// hook itself stays window.__undo (not renamed) — it's wired into the one button either way, and
+// renaming it would be a pointless breaking change for every existing caller.
+function showToast(msg, undoFn, actionLabel){
   const t = document.getElementById('toast');
-  t.innerHTML = escapeHtml(msg) + (undoFn ? ` <button onclick="__undo()">Undo</button>` : '');
+  t.innerHTML = escapeHtml(msg) + (undoFn ? ` <button onclick="__undo()">${escapeHtml(actionLabel || 'Undo')}</button>` : '');
   window.__undo = ()=>{ if(undoFn) undoFn(); t.classList.remove('show'); };
   t.classList.add('show');
   clearTimeout(toastTimer);
@@ -5443,6 +5535,7 @@ renderAll();
 initPullToRefresh();
 initTabSwipeNav();
 initDayRolloverWatch();
+initGithubSyncNudge(); // R8: automatic background check + dismissible nudge on load and on returning from 15+ min idle
 maybeShowDueTodayReminder();
 syncComposerViewportHeight();
 if(window.visualViewport){
