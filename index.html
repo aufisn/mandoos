@@ -669,6 +669,21 @@
   <div id="eod-body"></div>
 </div>
 
+<!-- R11: shown only when GitHub Sync finds a genuine per-item conflict (the same item
+     independently changed on both this device and the Gist since the last sync). Everything
+     else about a sync merges silently — this sheet only ever lists the items that actually need
+     a human decision. -->
+<div class="sheet-backdrop" id="merge-backdrop" onclick="cancelMergeConflicts()"></div>
+<div class="sheet" id="merge-sheet" style="max-height:none;">
+  <h3>Resolve Sync Conflicts</h3>
+  <div style="font-size:11.5px; color:var(--text-3); margin-bottom:12px;">These items changed on both this device and the Gist since the last sync. Pick which version to keep for each — everything else already merged automatically.</div>
+  <div id="merge-conflicts-list"></div>
+  <div class="sheet-actions">
+    <button class="btn ghost" style="flex:1;" onclick="cancelMergeConflicts()">Cancel</button>
+    <button class="btn primary" style="flex:1;" onclick="applyMergeResolutions()">Apply &amp; Sync</button>
+  </div>
+</div>
+
 <div class="sheet-backdrop" id="weekly-backdrop" onclick="closeWeeklyReview()"></div>
 <div class="sheet" id="weekly-sheet">
   <h3>Weekly Review</h3>
@@ -1056,11 +1071,19 @@ function loadGithubSyncConfig(){
         lastSyncedAt: typeof cfg.lastSyncedAt==='string' ? cfg.lastSyncedAt : null,
         lastSyncedRemoteUpdatedAt: typeof cfg.lastSyncedRemoteUpdatedAt==='string' ? cfg.lastSyncedRemoteUpdatedAt : null,
         localChangeSeq: Number.isFinite(cfg.localChangeSeq) ? cfg.localChangeSeq : 0,
-        syncedSeq: Number.isFinite(cfg.syncedSeq) ? cfg.syncedSeq : 0
+        syncedSeq: Number.isFinite(cfg.syncedSeq) ? cfg.syncedSeq : 0,
+        // R11: a full snapshot of {items,tags,history,focusSessions,settings} as of the last
+        // successful sync — the three-way merge's common ancestor ("base"). Lives here, not in
+        // `state`, for the same reason the rest of this config does: never exported, never part
+        // of the Gist payload itself. Validated loosely (just "is it shaped like a state") since
+        // a corrupted/missing one is handled safely anyway — computeStateMerge treats a null
+        // base as empty, which degrades to "union everything, no false conflicts" rather than
+        // crashing or losing data.
+        baseState: (cfg.baseState && typeof cfg.baseState==='object' && Array.isArray(cfg.baseState.items)) ? cfg.baseState : null
       };
     }
   }catch(e){}
-  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq:0, syncedSeq:0 };
+  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq:0, syncedSeq:0, baseState:null };
 }
 function saveGithubSyncConfig(cfg){
   try{ localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(cfg)); }catch(e){}
@@ -1330,10 +1353,15 @@ function normalizeImportedState(parsed){
   normalized.activeFocusSession = null;
   return normalized;
 }
-function applyImportedState(parsed){
+// R11: `silent` lets a caller that will show its own, more specific toast (GitHub Sync's merge
+// flow) suppress this function's own "Backup imported" message — which would otherwise be both
+// wrong (nothing was "imported" from a file) and briefly visible mid-sync before being
+// overwritten. Defaults to false, so every existing call site (the actual Import backup flow)
+// keeps behaving exactly as before.
+function applyImportedState(parsed, silent){
   const normalized = normalizeImportedState(parsed);
   if(!normalized){
-    showToast('That file does not look like a Mandoos backup', null);
+    if(!silent) showToast('That file does not look like a Mandoos backup', null);
     return false;
   }
   // A2: run the SAME Agenda migration startup already runs — here, on the normalized import,
@@ -1348,13 +1376,13 @@ function applyImportedState(parsed){
   }catch(e){
     // Never leave the app on a half-imported/half-migrated state — roll back to what was there.
     state = previousState;
-    showToast('That backup could not be imported safely', null);
+    if(!silent) showToast('That backup could not be imported safely', null);
     return false;
   }
   applyTheme();
   save();
   commitAndRefresh();
-  showToast('Backup imported', null);
+  if(!silent) showToast('Backup imported', null);
   return true;
 }
 function importDataFile(file){
@@ -1369,6 +1397,99 @@ function importDataFile(file){
       ()=> applyImportedState(parsed), 'Import', 'Cancel', null, true); // C6: genuinely consequential — replaces all local data — gets the distinct destructive styling, not the routine accent look
   };
   reader.readAsText(file);
+}
+
+/* ---------- three-way state merge (R11) ----------
+   Item-level (and tag-level) merge instead of a whole-state swap. Anything changed on only ONE
+   side since the last common sync point (the "base") merges silently — no prompt, no risk of
+   losing the other side's untouched data. A genuine conflict (the SAME item independently
+   changed on BOTH sides, to two different results) is the only thing that ever needs a human
+   decision, and it's scoped to just that one item, never the rest of the sync. */
+// Structural equality, independent of key order and undefined-vs-missing-key — plain
+// JSON.stringify comparison would false-positive on both of those for otherwise-identical items.
+function deepEqual(a, b){
+  if(a===b) return true;
+  if(a==null || b==null) return a===b;
+  if(typeof a!=='object' || typeof b!=='object') return false;
+  if(Array.isArray(a)!==Array.isArray(b)) return false;
+  if(Array.isArray(a)){
+    if(a.length!==b.length) return false;
+    for(let i=0;i<a.length;i++) if(!deepEqual(a[i], b[i])) return false;
+    return true;
+  }
+  const keysA = Object.keys(a).filter(k=>a[k]!==undefined);
+  const keysB = Object.keys(b).filter(k=>b[k]!==undefined);
+  if(keysA.length!==keysB.length) return false;
+  for(const k of keysA){ if(!keysB.includes(k) || !deepEqual(a[k], b[k])) return false; }
+  return true;
+}
+function mapById(arr){
+  const m = new Map();
+  (arr||[]).forEach(x=>{ if(x && x.id!=null) m.set(x.id, x); });
+  return m;
+}
+// autoResolveConflict(id, localVal, remoteVal) is optional — when provided (tags), a genuine
+// conflict resolves silently through it instead of being surfaced to the user; when omitted
+// (items), conflicts are collected and returned for the caller to resolve via the Merge
+// Conflicts sheet.
+function mergeByIdThreeWay(baseArr, localArr, remoteArr, autoResolveConflict){
+  const baseById = mapById(baseArr), localById = mapById(localArr), remoteById = mapById(remoteArr);
+  const allIds = new Set([...baseById.keys(), ...localById.keys(), ...remoteById.keys()]);
+  const merged = [];
+  const conflicts = [];
+  allIds.forEach(id=>{
+    const b = baseById.get(id), l = localById.get(id), r = remoteById.get(id);
+    const lChanged = !deepEqual(l, b);
+    const rChanged = !deepEqual(r, b);
+    if(!lChanged && !rChanged){ if(l) merged.push(l); return; } // unchanged on both — identical either way
+    if(lChanged && !rChanged){ if(l) merged.push(l); return; } // local-only edit/create/delete — just take it
+    if(!lChanged && rChanged){ if(r) merged.push(r); return; } // remote-only edit/create/delete — just take it
+    if(l && r && deepEqual(l, r)){ merged.push(l); return; } // both changed, but landed on the identical result
+    if(!l && r){ merged.push(r); return; } // deleted locally but edited remotely — the edit wins over the delete
+    if(l && !r){ merged.push(l); return; } // deleted remotely but edited locally — the edit wins over the delete
+    if(!l && !r) return; // deleted on both sides — stays deleted, nothing to merge
+    // both still exist, both independently changed since base, and disagree — a genuine conflict
+    if(autoResolveConflict){ const chosen = autoResolveConflict(id, l, r); if(chosen) merged.push(chosen); return; }
+    conflicts.push({ id, base:b, local:l, remote:r });
+  });
+  return { merged, conflicts };
+}
+// History/Focus Sessions are append-only logs (entries are never edited once created, only ever
+// added) — a straight union by id is correct and simpler than three-way diffing each entry.
+function unionById(arrA, arrB){
+  const map = mapById(arrA);
+  (arrB||[]).forEach(x=>{ if(x && x.id!=null && !map.has(x.id)) map.set(x.id, x); });
+  return [...map.values()];
+}
+// Settings are low-stakes bookkeeping (pullCap, theme, lastPullRefreshAt, etc.) — a genuine
+// conflict here (changed differently on both sides) silently prefers local rather than
+// interrupting the user over a preference field; everything else merges the same as items.
+function mergeSettings(base, local, remote){
+  base = base||{}; local = local||{}; remote = remote||{};
+  const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+  const merged = {};
+  keys.forEach(k=>{
+    const lChanged = !deepEqual(local[k], base[k]);
+    const rChanged = !deepEqual(remote[k], base[k]);
+    if(!lChanged && !rChanged) merged[k] = local[k];
+    else if(lChanged && !rChanged) merged[k] = local[k];
+    else if(!lChanged && rChanged) merged[k] = remote[k];
+    else merged[k] = local[k]; // both changed differently — local silently wins
+  });
+  return merged;
+}
+function emptyMergeState(){ return { items:[], tags:[], history:[], focusSessions:[], settings:{} }; }
+function computeStateMerge(base, local, remote){
+  const itemsResult = mergeByIdThreeWay(base.items, local.items, remote.items);
+  const tagsResult = mergeByIdThreeWay(base.tags, local.tags, remote.tags, (id,l)=>l); // tag conflicts auto-resolve to local, never shown to the user
+  const mergedState = {
+    items: itemsResult.merged,
+    tags: tagsResult.merged,
+    history: unionById(local.history, remote.history),
+    focusSessions: unionById(local.focusSessions, remote.focusSessions),
+    settings: mergeSettings(base.settings, local.settings, remote.settings)
+  };
+  return { mergedState, conflicts: itemsResult.conflicts };
 }
 
 /* ---------- GitHub Sync (manual, via a secret Gist) ----------
@@ -1428,13 +1549,15 @@ function connectGithubSync(){
   if(!gistId || !token){ showToast('Enter both the Gist ID and your access token', null); return; }
   // Connecting doesn't touch `state`, so it never counts as a local change — preserve whatever
   // localChangeSeq already tracked (pre-existing local edits correctly still read as unsynced).
-  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: 0 };
+  // baseState resets to null — any merge base from a previous connection belongs to a (possibly
+  // different) Gist and must never be compared against this one.
+  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: 0, baseState: null };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Connected — tap "Sync now" to sync', null);
 }
 function disconnectGithubSync(){
-  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: githubSyncConfig.syncedSeq };
+  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: githubSyncConfig.syncedSeq, baseState: githubSyncConfig.baseState };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Disconnected. Your Mandoos data is untouched — revoke the token on GitHub if you also want to cut off access there.', null);
@@ -1453,10 +1576,11 @@ function setGithubSyncStatusText(text){
   const el = document.getElementById('github-sync-status');
   if(el) el.textContent = text;
 }
-// The one entry point ("Sync now"). Always fetches the Gist first, then decides: first-ever-sync
-// against a Gist that already has real data, or the Gist having changed since this device last
-// touched it, both mean someone else's data could be sitting there — stop and let the user choose
-// which side wins rather than silently overwriting either one. Otherwise, just push.
+// R11: the one entry point ("Sync now"). Fetches the Gist, three-way-merges it against local
+// state using the last known common base, and only ever stops for a decision when a genuine
+// per-item conflict exists (the same item changed on both sides since that base, to two
+// different results) — everything else (new items either side, edits only one side made,
+// deletions) merges silently, with nothing ever discarded without the user choosing to discard it.
 async function githubSyncNow(){
   const cfg = githubSyncConfig;
   if(!cfg.gistId || !cfg.token){ showToast('Connect to a Gist first', null); return; }
@@ -1472,54 +1596,108 @@ async function githubSyncNow(){
   cfg.filename = remote.filename; // adopt whatever file the Gist actually uses, going forward
   let remoteParsed = null;
   try{ remoteParsed = remote.content ? JSON.parse(remote.content) : null; }catch(e){ remoteParsed = null; }
-  const remoteHasRealData = !!(remoteParsed && Array.isArray(remoteParsed.items) && remoteParsed.items.length>0);
-  const isFirstSyncEver = !cfg.lastSyncedAt;
-  const remoteChangedSinceLastSync = !!cfg.lastSyncedRemoteUpdatedAt && remote.updatedAt !== cfg.lastSyncedRemoteUpdatedAt;
+  if(remoteParsed && !validImportShape(remoteParsed)) remoteParsed = null; // corrupted/foreign content — merge against empty rather than garbage
+  const remoteState = remoteParsed || emptyMergeState();
+  const localState = { items: state.items||[], tags: state.tags||[], history: state.history||[], focusSessions: state.focusSessions||[], settings: state.settings||{} };
+  // No base yet (this device's first-ever sync to this Gist) degrades to an empty base — which
+  // in turn degrades the merge to "union everything, nothing conflicts" for any item that
+  // doesn't collide by id, exactly the behavior wanted for "second device picks up the Gist's
+  // existing data" and "first push from a brand-new device" alike.
+  const baseState = cfg.baseState || emptyMergeState();
 
-  if((isFirstSyncEver && remoteHasRealData) || remoteChangedSinceLastSync){
+  const { mergedState, conflicts } = computeStateMerge(baseState, localState, remoteState);
+
+  if(conflicts.length){
     renderGithubSyncFields();
-    const msg = isFirstSyncEver
-      ? 'This Gist already has data on it (likely from another device). Keep this device’s data (overwrite the Gist), or use the Gist’s data (overwrite this device)?'
-      : 'The Gist has changed since this device last synced. Keep this device’s data (overwrite the Gist), or use the Gist’s data (overwrite this device)?';
-    showConfirm(msg, ()=>githubPushNow(cfg), 'Keep This Device', 'Use Gist Data', ()=>githubPullNow(cfg, remoteParsed, remote.updatedAt));
+    openMergeConflictsSheet(cfg, mergedState, conflicts, remote.updatedAt);
     return;
   }
-  await githubPushNow(cfg);
+  await finishMergeAndPush(cfg, mergedState, remote.updatedAt);
 }
-async function githubPushNow(cfg){
+// Applies the merge result as the new live state (the exact same validated/normalized/migrated
+// path Import backup already uses — silent:true suppresses its own "Backup imported" toast,
+// which would be both wrong here and briefly visible mid-sync), then pushes that same merged
+// state back up so the Gist and this device agree afterward, and records it as the new base.
+async function finishMergeAndPush(cfg, mergedState, remoteUpdatedAt){
   setGithubSyncStatusText('Syncing…');
-  // R7: snapshot the seq BEFORE the network round-trip — if a save() happens while the PATCH is
-  // in flight, that change was NOT part of what actually got pushed, so it must still read as
-  // dirty afterward. Capturing after the await would wrongly mark it synced.
-  const seqAtPushTime = cfg.localChangeSeq;
+  const applied = applyImportedState(mergedState, true);
+  if(!applied){
+    renderGithubSyncFields();
+    showToast('Merge could not be applied safely — nothing was changed', null);
+    return;
+  }
   try{
     const jsonText = serializeState(); // same payload Export backup already produces — the token itself is never part of it
     const result = await pushStateToGist(cfg.gistId, cfg.token, cfg.filename, jsonText);
     cfg.lastSyncedRemoteUpdatedAt = result.updatedAt;
     cfg.lastSyncedAt = nowISO();
-    cfg.syncedSeq = seqAtPushTime;
+    cfg.baseState = JSON.parse(jsonText); // the just-pushed state IS the new common ancestor for next time
+    cfg.syncedSeq = cfg.localChangeSeq; // applyImportedState's own save() already bumped this
     saveGithubSyncConfig(cfg);
     renderGithubSyncFields();
-    showToast('Synced — this device’s data is now on the Gist', null);
+    showToast('Synced', null);
   }catch(err){
     renderGithubSyncFields();
-    showToast('Sync failed: '+err.message, null);
+    showToast('Sync failed while pushing the merge: '+err.message, null);
   }
 }
-function githubPullNow(cfg, remoteParsed, remoteUpdatedAt){
-  if(!remoteParsed || !validImportShape(remoteParsed)){
-    renderGithubSyncFields();
-    showToast('The Gist’s data doesn’t look like a valid Mandoos backup', null);
-    return;
-  }
-  const ok = applyImportedState(remoteParsed); // same validated/normalized/migrated path local Import backup uses; this itself calls save(), bumping localChangeSeq
-  if(ok){
-    cfg.syncedSeq = cfg.localChangeSeq; // local now exactly matches what was just pulled — synced as of right now
-    cfg.lastSyncedRemoteUpdatedAt = remoteUpdatedAt;
-    cfg.lastSyncedAt = nowISO();
-    saveGithubSyncConfig(cfg);
-  }
+/* ---------- Merge Conflicts sheet (R11) ---------- */
+let pendingMergeContext = null;
+let mergeConflictResolutions = {};
+function conflictItemLabel(item){
+  if(!item) return '(deleted)';
+  if(item.kind==='agenda') return item.name || '(untitled agenda)';
+  return item.text || '(untitled)';
+}
+function openMergeConflictsSheet(cfg, mergedState, conflicts, remoteUpdatedAt){
+  pendingMergeContext = { cfg, mergedState, conflicts, remoteUpdatedAt };
+  mergeConflictResolutions = {};
+  conflicts.forEach(c=>{ mergeConflictResolutions[c.id] = 'local'; }); // default: keep this device's version, fully overridable per item below
+  renderMergeConflictsList();
+  document.getElementById('merge-backdrop').classList.add('open');
+  document.getElementById('merge-sheet').classList.add('open');
+}
+function closeMergeConflictsSheet(){
+  document.getElementById('merge-backdrop').classList.remove('open');
+  document.getElementById('merge-sheet').classList.remove('open');
+}
+function setConflictResolution(itemId, choice){
+  mergeConflictResolutions[itemId] = choice;
+  renderMergeConflictsList();
+}
+function renderMergeConflictsList(){
+  const wrap = document.getElementById('merge-conflicts-list');
+  if(!wrap || !pendingMergeContext) return;
+  wrap.innerHTML = pendingMergeContext.conflicts.map(c=>{
+    const choice = mergeConflictResolutions[c.id] || 'local';
+    const shown = choice==='local' ? c.local : c.remote;
+    return `<div class="item-card" style="margin-bottom:10px;">
+      <div class="txt" style="font-size:13.5px;">${escapeHtml(conflictItemLabel(shown))}</div>
+      <div class="item-meta"><span class="pill ${kindClass(c.local||c.remote)}">${kindLabel(c.local||c.remote)}</span></div>
+      <div class="shape-row" style="margin-top:8px;">
+        <button type="button" class="shape-btn ${choice==='local'?'selected':''}" onclick="setConflictResolution('${c.id}','local')">Keep This Device</button>
+        <button type="button" class="shape-btn ${choice==='remote'?'selected':''}" onclick="setConflictResolution('${c.id}','remote')">Keep Gist</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function cancelMergeConflicts(){
+  closeMergeConflictsSheet();
+  pendingMergeContext = null;
   renderGithubSyncFields();
+  showToast('Sync cancelled — nothing was changed', null);
+}
+function applyMergeResolutions(){
+  if(!pendingMergeContext) return;
+  const { cfg, mergedState, conflicts, remoteUpdatedAt } = pendingMergeContext;
+  conflicts.forEach(c=>{
+    const choice = mergeConflictResolutions[c.id] || 'local';
+    const winner = choice==='local' ? c.local : c.remote;
+    if(winner) mergedState.items.push(winner);
+  });
+  closeMergeConflictsSheet();
+  pendingMergeContext = null;
+  finishMergeAndPush(cfg, mergedState, remoteUpdatedAt);
 }
 function renderGithubSyncFields(){
   const wrap = document.getElementById('github-sync-fields');
