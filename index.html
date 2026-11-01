@@ -308,6 +308,54 @@
   .sheet.open{transform:translateY(0);}
   #confirm-sheet{border:2px solid var(--accent); box-sizing:border-box; z-index:33;}
   #confirm-backdrop{z-index:32;}
+  /* ---------- App lock (opt-in) ----------
+     #lock-screen is a full-viewport opaque layer above everything else. html.is-locked is set by a
+     tiny inline script in <head> (before first paint) whenever a lock record exists, so locked
+     content is never even briefly visible; everything but the lock screen is also visibility:hidden
+     so it can't be reached by keyboard or screen reader while locked. */
+  #lock-screen{display:none; position:fixed; inset:0; z-index:1000; background:var(--bg); color:var(--text);
+    flex-direction:column; align-items:center; justify-content:center; padding:40px 32px; box-sizing:border-box; overflow-y:auto;}
+  html.is-locked #lock-screen{display:flex;}
+  html.is-locked body > *:not(#lock-screen):not(script){visibility:hidden;}
+  .lock-logo{width:64px; height:64px; border-radius:16px; margin-bottom:16px; object-fit:cover;}
+  .lock-title{font-size:24px; font-weight:700; margin-bottom:4px; text-align:center;}
+  .lock-sub{color:var(--text-3); font-size:13px; margin-bottom:36px; text-align:center;}
+  .lock-input-wrap{width:100%; max-width:320px; position:relative; margin-bottom:14px;}
+  .lock-input{width:100%; box-sizing:border-box; background:var(--surface); border:1.5px solid var(--border-strong);
+    border-radius:14px; padding:15px 48px 15px 18px; color:var(--text); font-size:17px; font-family:inherit;
+    letter-spacing:1px; text-align:center; -webkit-appearance:none;}
+  .lock-input:focus{outline:none; border-color:var(--accent);}
+  .lock-input.shake{animation:lock-shake .4s ease;}
+  @keyframes lock-shake{0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)}}
+  .lock-eye{position:absolute; right:12px; top:50%; transform:translateY(-50%); background:none; border:none;
+    color:var(--text-3); font-size:18px; padding:4px; cursor:pointer;}
+  .lock-btn,.lock-bio-btn{width:100%; max-width:320px; box-sizing:border-box; padding:15px; background:var(--accent);
+    color:#fff; border:none; border-radius:14px; font-size:16px; font-weight:600; font-family:inherit; cursor:pointer;}
+  .lock-bio-btn{display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:6px;}
+  .lock-btn.secondary{background:var(--surface); color:var(--text-2); border:1px solid var(--border-strong);}
+  .lock-btn:active,.lock-bio-btn:active{opacity:.85;}
+  .lock-or{color:var(--text-3); font-size:12px; margin:10px 0 14px; text-align:center;}
+  .lock-error{color:var(--danger); font-size:13px; font-weight:600; margin-top:10px; min-height:20px; text-align:center; max-width:320px;}
+  .lock-forgot{background:none; border:none; color:var(--text-3); font-size:12px; text-decoration:underline; margin-top:26px; cursor:pointer; font-family:inherit;}
+  #lock-forgot-panel{display:none; max-width:320px; margin-top:12px; font-size:12px; line-height:1.55; color:var(--text-2); text-align:center;}
+  #lock-forgot-panel .btn{width:100%; margin-top:10px; box-sizing:border-box;}
+  /* Password dialog — sits above the confirm sheet (z 32/33) */
+  #pwd-sheet{border:2px solid var(--accent); box-sizing:border-box; z-index:35; max-height:none;}
+  #pwd-backdrop{z-index:34;}
+  #pwd-message{font-size:13px; color:var(--text-2); margin-bottom:14px; line-height:1.55;}
+  #pwd-fields label{display:block; font-size:11px; color:var(--text-3); margin:10px 0 4px;}
+  #pwd-fields input{width:100%; box-sizing:border-box; border:0.5px solid var(--border-strong); background:var(--surface);
+    border-radius:var(--radius); padding:10px 12px; font-size:15px; color:var(--text); font-family:inherit;}
+  #pwd-error{min-height:18px; margin:10px 0 6px; font-size:12.5px; color:var(--danger); font-weight:600;}
+  .sec-card{border:0.5px solid var(--border); background:var(--surface); border-radius:var(--radius); padding:12px; margin-bottom:10px;}
+  .sec-card-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:14px; font-weight:600;}
+  .sec-card-body{font-size:12px; color:var(--text-3); line-height:1.55; margin-bottom:10px;}
+  .sec-badge{font-size:10.5px; padding:2px 8px; border-radius:999px; background:var(--surface-2); color:var(--text-3); border:0.5px solid var(--border);}
+  .sec-badge.on{background:var(--accent-bg); color:var(--accent); border-color:var(--accent);}
+  .sec-select{width:100%; box-sizing:border-box; border:0.5px solid var(--border-strong); background:var(--surface);
+    border-radius:var(--radius); padding:9px 10px; font-size:13px; color:var(--text); font-family:inherit;}
+  .sec-actions{display:flex; gap:10px; flex-wrap:wrap;}
+  .sec-actions .btn{min-width:120px;}
 
   /* ---------- Mobile full-screen composer (Add/Edit) ----------
      Mandoos is mobile-only: the Add/Edit form is never a bottom panel competing with the card
@@ -421,9 +469,70 @@
     opacity:0; transition:all .2s ease; z-index:40; max-width:88%;}
   #toast.show{opacity:1; transform:translate(-50%,0);}
   #toast button{background:none; border:none; color:#E8C46A; font-weight:600; font-size:13px;}
+
+  /* ---------- Unfolded / wide layout (≥720px: Galaxy Z Fold inner screen, tablets, desktop) ----------
+     Phone (<720px) is untouched — every rule below sits inside a min-width query. Three modes:
+       phone   <720px    the original 480px column with the bottom nav
+       fold    720–1099  bottom nav becomes a 78px side rail, content fills the width in two columns,
+                         Add/Edit open as a right-hand panel beside the list, other sheets centre as modals
+       desktop ≥1100     same structure with a wider panel (and three columns from 1400px)
+     CSS only: no markup differs between modes, so rotating/folding never re-renders anything.
+     layoutMode()/data-layout (see script) just mirrors the active breakpoint for tests and debugging. */
+  @media (min-width:720px){
+    :root{--composer-w:min(480px,48vw);}
+    #app{max-width:none; margin:0 0 0 78px;}
+    header{left:78px; transform:none; width:calc(100% - 78px); max-width:none; padding-left:28px; padding-right:28px;}
+    nav#bottomnav{left:0; top:0; bottom:0; transform:none; width:78px; max-width:none;
+      flex-direction:column; justify-content:flex-start; align-items:center; gap:10px;
+      padding:max(18px,env(safe-area-inset-top)) 0 18px; border-top:none; border-right:0.5px solid var(--border);
+      display:flex !important; /* stays visible while Log is in select mode, which hides it inline on phones */}
+    nav#bottomnav button{width:70px; padding:6px 0;}
+    .screen{align-self:center; width:100%; max-width:1200px; padding:84px 28px 48px;}
+    #screen-setup{max-width:760px;}
+    #today-list,#log-list{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:14px; align-items:start;}
+    #today-list > .empty-hint,#log-list > .empty-hint{grid-column:1/-1;}
+    #fab{right:28px; bottom:28px;}
+    #focus-fab{right:28px; bottom:94px;}
+    #log-bulk-bar,#log-bulk-tag-panel{left:78px; transform:none; width:calc(100% - 78px); max-width:none;}
+    #toast{left:calc(50% + 39px); bottom:32px;}
+    body.composer-open #toast{left:calc(39px + (100% - var(--composer-w)) / 2);} /* centred in the part of the screen the panel leaves free */
+    /* Add/Edit: a panel on the right edge, the list stays visible beside it (backdrop is lighter, still tap-to-close) */
+    .sheet.composer{left:auto; right:0; margin:0; width:var(--composer-w); max-width:none;
+      border-left:0.5px solid var(--border-strong); box-shadow:-8px 0 28px rgba(0,0,0,.22); transform:translateX(100%);}
+    .sheet.composer.open{transform:translateX(0);}
+    #add-backdrop,#edit-backdrop{background:rgba(30,26,20,.18);}
+    /* Every other sheet becomes a centred modal instead of a bottom sheet */
+    .sheet:not(.composer){left:50%; right:auto; bottom:auto; top:50%; width:min(540px,calc(100vw - 48px)); max-width:none;
+      margin:0; border-radius:18px; transform:translate(-50%,-44%); opacity:0; visibility:hidden; pointer-events:none;
+      transition:transform .2s ease, opacity .2s ease, visibility 0s linear .2s;}
+    .sheet:not(.composer).open{transform:translate(-50%,-50%); opacity:1; visibility:visible; pointer-events:auto;
+      transition:transform .2s ease, opacity .2s ease, visibility 0s;}
+  }
+  @media (min-width:1100px){ :root{--composer-w:min(520px,40vw);} }
+  @media (min-width:1400px){ #today-list,#log-list{grid-template-columns:repeat(3,minmax(0,1fr));} }
 </style>
+<script>try{ if(localStorage.getItem('mandoos_lock_v1')) document.documentElement.classList.add('is-locked'); }catch(e){}</script>
 </head>
 <body>
+<div id="lock-screen" role="dialog" aria-modal="true" aria-label="Unlock Mandoos">
+  <img id="lock-logo" class="lock-logo" alt="" style="display:none">
+  <div class="lock-title">Mandoos</div>
+  <div class="lock-sub" id="lock-sub">Enter your password to continue</div>
+  <button class="lock-bio-btn" id="lock-bio-btn" style="display:none" onclick="doBioUnlock()"><span style="font-size:22px">☝</span>Unlock with fingerprint / face</button>
+  <div class="lock-or" id="lock-or" style="display:none">or use your password</div>
+  <div class="lock-input-wrap" id="lock-input-wrap">
+    <input class="lock-input" id="lock-input" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doUnlock()">
+    <button class="lock-eye" id="lock-eye" type="button" onclick="toggleLockEye()" aria-label="Show password">👁</button>
+  </div>
+  <button class="lock-btn" id="lock-btn" onclick="doUnlock()">Unlock</button>
+  <div class="lock-error" id="lock-error" role="alert"></div>
+  <button class="lock-forgot" type="button" onclick="toggleLockForgot()">Forgot password?</button>
+  <div id="lock-forgot-panel">
+    There is no way to recover a forgotten password — your data is encrypted with it. You can erase Mandoos's data on this device and start fresh, then restore from an exported backup or your GitHub Gist.
+    <button class="btn primary danger" type="button" onclick="eraseDeviceData()">Erase this device's data</button>
+  </div>
+</div>
+
 <div id="app">
   <header>
     <span class="brand" style="display:inline-flex; align-items:center;"><img src="data:image/png;base64,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" alt="" style="height:28px; width:auto; display:block; margin-right:1px;">andoos</span>
@@ -525,7 +634,7 @@
     </div>
     <div style="display:flex; gap:10px;">
       <button class="btn ghost" onclick="exportData()">Export backup</button>
-      <label class="btn ghost" style="text-align:center; cursor:pointer;">
+      <label class="btn ghost" style="text-align:center; cursor:pointer;" onclick="expectExternalUi()">
         Import backup
         <input type="file" accept="application/json" style="display:none;"
           onchange="importDataFile(this.files[0]); this.value='';">
@@ -537,7 +646,7 @@
     <div class="section-sub" style="margin-top:26px;">GitHub Sync</div>
     <div style="font-size:12.5px; color:var(--text-3); margin-bottom:10px; line-height:1.5;">
       Manually sync this device with a secret Gist you control, so another device can pick up where you left off.
-      Your access token is stored only in this browser — it is never included in Export backup or in the data that gets synced.
+      Your access token is stored only in this browser — it is never included in Export backup or in the data that gets synced. With the app lock on (see Security), the Gist copy is encrypted as well.
     </div>
     <div id="github-sync-fields"></div>
     <div id="github-sync-status" style="font-size:11.5px; color:var(--text-3); margin-top:8px;"></div>
@@ -548,6 +657,13 @@
       This does not reach you while the app has been closed for a while — that would need a server, which Mandoos doesn't have.
     </div>
     <div id="notification-fields"></div>
+
+    <div class="section-sub" style="margin-top:26px;">Security</div>
+    <div style="font-size:12.5px; color:var(--text-3); margin-bottom:10px; line-height:1.5;">
+      Optional. A password (and, where your device supports it, fingerprint or face unlock) encrypts your tasks and your
+      GitHub token on this device, and locks the app when you're away. Export backups stay readable on purpose.
+    </div>
+    <div id="security-fields"></div>
 
     <div class="section-sub" style="margin-top:26px;">Help</div>
     <button class="btn ghost" style="width:100%; box-sizing:border-box;" onclick="openHelpSheet()">Help &amp; Guide</button>
@@ -626,6 +742,18 @@
   <div class="sheet-actions">
     <button class="btn ghost" id="confirm-no-btn">Cancel</button>
     <button class="btn primary" id="confirm-yes-btn">Confirm</button>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="pwd-backdrop"></div>
+<div class="sheet" id="pwd-sheet" role="dialog" aria-modal="true" aria-labelledby="pwd-title">
+  <h3 id="pwd-title">Password</h3>
+  <div id="pwd-message"></div>
+  <div id="pwd-fields"></div>
+  <div id="pwd-error" role="alert"></div>
+  <div class="sheet-actions">
+    <button class="btn ghost" id="pwd-cancel-btn" type="button">Cancel</button>
+    <button class="btn primary" id="pwd-ok-btn" type="button">Continue</button>
   </div>
 </div>
 
@@ -1024,6 +1152,14 @@
     <div class="help-desc">Delete means "this shouldn't exist" — only allowed on items with zero real history. Close means "this reached its natural end" — always preserved via Archive, never blocked by open linked children.</div>
   </div>
   <div class="help-row">
+    <div class="help-action">App lock &amp; fingerprint unlock</div>
+    <div class="help-desc">Optional, in Setup → Security. A password encrypts your tasks and GitHub token on this device and locks Mandoos when you're away (you choose when). Where your phone supports it, a fingerprint or face can unlock instead. There's no password recovery — keep an exported backup or your Gist. With the lock on, the Gist copy is encrypted too; exported backups stay readable.</div>
+  </div>
+  <div class="help-row">
+    <div class="help-action">Unfolded screens</div>
+    <div class="help-desc">On a wide screen (Galaxy Fold unfolded, tablet, desktop) the bottom bar becomes a side rail, Today and Log use two columns, and Add/Edit open in a panel beside your list.</div>
+  </div>
+  <div class="help-row">
     <div class="help-action">Tags are unlimited, on every kind</div>
     <div class="help-desc">There's no cap, and it's intentional — the same many-to-many model as labels in any note or task app.</div>
   </div>
@@ -1039,11 +1175,37 @@
 /* ---------- storage ---------- */
 let storageOK = true;
 let memFallback = { items:[], tags:[], settings:{ pullCap:3 } };
+// App lock (opt-in). With NO lock record everything below behaves exactly as before: plain JSON in
+// localStorage, written synchronously. With a lock record, `mandoos_state` and
+// `mandoos_github_sync` hold AES-GCM envelopes ({__enc:1, iv, ct}) and `state` stays an empty
+// placeholder until the user unlocks — see the App Lock section further down for the key model.
+const STATE_KEY = 'mandoos_state';
+const LOCK_REC_KEY = 'mandoos_lock_v1';
+const BIO_KEY = 'mandoos_bio';
+const AUTOLOCK_KEY = 'mandoos_autolock';
+const PBKDF2_ITER = 310000;
+const HAS_SUBTLE = !!(window.crypto && window.crypto.subtle);
+function loadLockRecord(){
+  try{ const r = JSON.parse(localStorage.getItem(LOCK_REC_KEY)); return r && r.salt && r.hash && r.dekWrap ? r : null; }
+  catch(e){ return null; }
+}
+function isEncBlob(o){ return !!(o && typeof o==='object' && o.__enc===1 && typeof o.iv==='string' && typeof o.ct==='string'); }
+let lockRec = loadLockRecord();
+let _locked = !!lockRec;      // true from page load until a successful unlock
+let _sessionKey = null;       // the AES-GCM data key — in memory only while unlocked
+function emptyState(){ return { items:[], tags:[], settings:{ pullCap:3 } }; }
 function loadState(){
   try{
-    const raw = localStorage.getItem('mandoos_state');
-    if(raw) return JSON.parse(raw);
-    return { items:[], tags:[], settings:{ pullCap:3 } };
+    const raw = localStorage.getItem(STATE_KEY);
+    if(lockRec) return emptyState(); // the real state is decrypted from storage by finishUnlock()
+    if(raw){
+      const parsed = JSON.parse(raw);
+      // Encrypted data but no lock record: the key material is gone, so this can't be opened —
+      // keep the app locked (and never overwrite the blob) instead of starting from empty.
+      if(isEncBlob(parsed)){ _locked = true; return emptyState(); }
+      return parsed;
+    }
+    return emptyState();
   }catch(e){ storageOK = false; return memFallback; }
 }
 let state = loadState();
@@ -1059,9 +1221,11 @@ let state = loadState();
 // that: syncedSeq is stamped with whatever localChangeSeq was AT THE MOMENT a push/pull last
 // captured it, so any save() after that point is unambiguously ahead of it.
 const GITHUB_SYNC_KEY = 'mandoos_github_sync';
-function loadGithubSyncConfig(){
+function defaultGithubSyncConfig(){
+  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq:0, syncedSeq:0, baseState:null, syncKey:null, pwWrap:null };
+}
+function parseGithubSyncConfig(raw){
   try{
-    const raw = localStorage.getItem(GITHUB_SYNC_KEY);
     const cfg = raw ? JSON.parse(raw) : null;
     if(cfg && typeof cfg==='object'){
       return {
@@ -1079,14 +1243,31 @@ function loadGithubSyncConfig(){
         // a corrupted/missing one is handled safely anyway — computeStateMerge treats a null
         // base as empty, which degrades to "union everything, no false conflicts" rather than
         // crashing or losing data.
-        baseState: (cfg.baseState && typeof cfg.baseState==='object' && Array.isArray(cfg.baseState.items)) ? cfg.baseState : null
+        baseState: (cfg.baseState && typeof cfg.baseState==='object' && Array.isArray(cfg.baseState.items)) ? cfg.baseState : null,
+        // Gist encryption (only ever set while the app lock is on; the whole config is encrypted at
+        // rest then): syncKey = the base64 raw key that encrypts the Gist payload, pwWrap = that same
+        // key wrapped under a password-derived key, embedded in the Gist so any device that knows
+        // the password can open it.
+        syncKey: typeof cfg.syncKey==='string' ? cfg.syncKey : null,
+        pwWrap: (cfg.pwWrap && typeof cfg.pwWrap==='object' && cfg.pwWrap.salt && cfg.pwWrap.ct) ? cfg.pwWrap : null
       };
     }
   }catch(e){}
-  return { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq:0, syncedSeq:0, baseState:null };
+  return defaultGithubSyncConfig();
+}
+function loadGithubSyncConfig(){
+  if(lockRec || _locked) return defaultGithubSyncConfig(); // decrypted from storage by finishUnlock()
+  let raw = null;
+  try{ raw = localStorage.getItem(GITHUB_SYNC_KEY); }catch(e){}
+  return parseGithubSyncConfig(raw);
 }
 function saveGithubSyncConfig(cfg){
-  try{ localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(cfg)); }catch(e){}
+  if(_locked) return; // the placeholder config must never overwrite the stored (encrypted) one
+  try{
+    const json = JSON.stringify(cfg);
+    if(lockRec){ secureWrite(GITHUB_SYNC_KEY, json); return; }
+    localStorage.setItem(GITHUB_SYNC_KEY, json);
+  }catch(e){}
 }
 let githubSyncConfig = loadGithubSyncConfig();
 // R4-C1: backupStatsDirty/backupStatsCache back renderBackupStats() below — an explicit flag
@@ -1107,6 +1288,7 @@ let backupStatsDirty = true;
 let behaviorHintsCache = null;
 let behaviorHintsDirty = true;
 function save(){
+  if(_locked) return; // while locked `state` is an empty placeholder — it must never reach storage
   backupStatsDirty = true;
   behaviorHintsDirty = true;
   // R7: same chokepoint-piggyback as backupStatsDirty above — every real mutation passes
@@ -1118,17 +1300,55 @@ function save(){
   githubSyncConfig.localChangeSeq = (githubSyncConfig.localChangeSeq||0) + 1;
   saveGithubSyncConfig(githubSyncConfig);
   try{
-    localStorage.setItem('mandoos_state', JSON.stringify(state));
-    if(!storageOK){ storageOK = true; showToast('Storage is available again — changes are saving normally.', null); }
+    const json = JSON.stringify(state);
+    if(lockRec){ secureWrite(STATE_KEY, json); return; } // encrypted + async; secureWrite reports its own storage failures
+    localStorage.setItem(STATE_KEY, json);
+    noteStorageOK();
   }catch(e){
-    // B7: surface this the moment it actually happens, not only at next cold start (see the
-    // startup-only check at the bottom of this file) — only toast on the OK->failing edge so a
-    // still-broken store doesn't spam a toast on every single save() call afterward.
-    const wasOK = storageOK;
-    storageOK = false;
-    if(wasOK) showToast('Could not save — your last change may not be stored. Export a backup if you can.', null);
+    noteStorageFailed();
   }
 }
+function noteStorageOK(){
+  if(!storageOK){ storageOK = true; showToast('Storage is available again — changes are saving normally.', null); }
+}
+function noteStorageFailed(){
+  // B7: surface this the moment it actually happens, not only at next cold start (see the
+  // startup-only check at the bottom of this file) — only toast on the OK->failing edge so a
+  // still-broken store doesn't spam a toast on every single save() call afterward.
+  const wasOK = storageOK;
+  storageOK = false;
+  if(wasOK) showToast('Could not save — your last change may not be stored. Export a backup if you can.', null);
+}
+// Encrypted writes. crypto.subtle is async but save() is a synchronous chokepoint, so writes are
+// coalesced: save() records the latest JSON per key and one background loop encrypts + stores
+// whatever is newest. lockApp() / turning the lock off await flushSecureWrites() before they
+// touch the key, so nothing queued is ever dropped.
+const _pendingWrites = {};
+let _flushP = null;
+function secureWrite(key, json){
+  _pendingWrites[key] = json;
+  if(!_flushP) _flushP = flushSecureLoop();
+  return _flushP;
+}
+async function flushSecureLoop(){
+  try{
+    let failed = false;
+    while(Object.keys(_pendingWrites).length){
+      const keys = Object.keys(_pendingWrites);
+      for(const k of keys){
+        const json = _pendingWrites[k];
+        delete _pendingWrites[k];
+        if(!lockRec || !_sessionKey) continue;
+        try{
+          const blob = await encryptWith(_sessionKey, new TextEncoder().encode(json));
+          localStorage.setItem(k, JSON.stringify({ __enc:1, iv:blob.iv, ct:blob.ct }));
+        }catch(e){ failed = true; }
+      }
+    }
+    if(failed) noteStorageFailed(); else noteStorageOK();
+  }finally{ _flushP = null; }
+}
+async function flushSecureWrites(){ while(_flushP) await _flushP; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 function nowISO(){ return new Date().toISOString(); }
 // Local-calendar-day string (YYYY-MM-DD) — NOT toISOString(), which is UTC and can disagree
@@ -1543,6 +1763,88 @@ async function pushStateToGist(gistId, token, filename, jsonText){
   const gist = await res.json();
   return { updatedAt: gist.updated_at };
 }
+/* ---------- Gist encryption (only while the app lock is on) ----------
+   The Gist is a plain-text file on GitHub, so with the lock on it holds an envelope instead of
+   readable JSON: {mandoosEncrypted:1, iv, ct, pw}. `ct` is the state encrypted with a random
+   "sync key"; `pw` is that sync key wrapped under a key derived (PBKDF2) from the app password, so a
+   new device only needs the password to open it. Each device keeps the sync key in its own
+   (encrypted-at-rest) GitHub Sync config, so ordinary syncs never ask for the password again. */
+function isGistEnvelope(o){ return !!(o && typeof o==='object' && o.mandoosEncrypted===1 && typeof o.iv==='string' && typeof o.ct==='string' && o.pw); }
+async function importSyncKey(b64raw){ return crypto.subtle.importKey('raw', unb64(b64raw), { name:'AES-GCM' }, false, ['encrypt','decrypt']); }
+async function makePwWrap(rawBytes, password){
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const d = await derivePwd(password, salt, PBKDF2_ITER);
+  const w = await encryptWith(d.kek, rawBytes);
+  return { salt: b64(salt), iter: PBKDF2_ITER, iv: w.iv, ct: w.ct };
+}
+// Throws if the password doesn't open this wrap. Returns the raw sync key (base64).
+async function openPwWrap(pw, password){
+  const d = await derivePwd(password, unb64(pw.salt), pw.iter || PBKDF2_ITER);
+  return b64(await decryptWith(d.kek, pw));
+}
+async function decryptGistEnvelope(env){
+  const key = await importSyncKey(githubSyncConfig.syncKey);
+  return new TextDecoder().decode(await decryptWith(key, env));
+}
+async function encodeGistContent(jsonText){
+  if(!lockRec) return jsonText;
+  const cfg = githubSyncConfig;
+  if(!cfg.syncKey || !cfg.pwWrap) throw new Error('The Gist encryption key is not set up on this device.');
+  const blob = await encryptWith(await importSyncKey(cfg.syncKey), new TextEncoder().encode(jsonText));
+  return JSON.stringify({ mandoosEncrypted:1, v:1, iv: blob.iv, ct: blob.ct, pw: cfg.pwWrap });
+}
+// Makes sure this device holds the sync key for the Gist about to be merged/pushed. Returns false if
+// the user backed out (or the password was wrong and they gave up) — the caller then aborts cleanly.
+async function prepareGistKey(env){
+  const cfg = githubSyncConfig;
+  if(env){
+    if(cfg.syncKey){
+      try{ await decryptGistEnvelope(env); return true; }catch(e){ /* a different key — fall through and ask for the password */ }
+    }
+    let rawKey = null;
+    const done = await askPasswordFlow({
+      title: 'This Gist is encrypted',
+      message: 'Enter the app password that was set on the device that last synced to it. Mandoos remembers the key afterwards, so you won\'t be asked again on this device.',
+      fields: [{ label:'Password', placeholder:'App password', autocomplete:'current-password' }],
+      okLabel: 'Unlock Gist',
+      submit: async (v)=>{ try{ rawKey = await openPwWrap(env.pw, v[0]); }catch(e){ return 'That password doesn\'t open this Gist'; } return null; }
+    });
+    if(!done || !rawKey) return false;
+    cfg.syncKey = rawKey; cfg.pwWrap = env.pw; // keep the Gist's own wrap so it stays valid for the password that made it
+    saveGithubSyncConfig(cfg);
+    return true;
+  }
+  if(cfg.syncKey && cfg.pwWrap) return true;
+  // Nothing encrypted on the Gist yet and no key here: create one, wrapped under the app password
+  let ok = false;
+  const done = await askPasswordFlow({
+    title: 'Encrypt the Gist copy',
+    message: 'The app lock is on, so the copy on GitHub will be encrypted too. Enter your app password once to set that up.',
+    fields: [{ label:'Password', placeholder:'Your app password', autocomplete:'current-password' }],
+    okLabel: 'Continue',
+    submit: async (v)=>{ const r = await verifyPwd(v[0]); if(!r.ok) return 'Incorrect password'; await ensureSyncKey(v[0]); ok = true; return null; }
+  });
+  return !!(done && ok);
+}
+// Creates the sync key + its password wrap when this device doesn't have them (password known).
+async function ensureSyncKey(password){
+  const cfg = githubSyncConfig;
+  if(cfg.syncKey && cfg.pwWrap) return;
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  cfg.syncKey = b64(raw);
+  cfg.pwWrap = await makePwWrap(raw, password);
+  saveGithubSyncConfig(cfg);
+}
+// Password changed: the Gist must carry a wrap the NEW password opens. The sync key itself is
+// unchanged, so devices that already hold it keep syncing; the Gist is marked as having unsynced
+// changes so the next sync uploads the new wrap.
+async function rewrapSyncKeyForPassword(newPassword){
+  const cfg = githubSyncConfig;
+  if(!cfg.syncKey) return;
+  cfg.pwWrap = await makePwWrap(unb64(cfg.syncKey), newPassword);
+  cfg.localChangeSeq = (cfg.localChangeSeq||0) + 1;
+  saveGithubSyncConfig(cfg);
+}
 function connectGithubSync(){
   const gistId = (document.getElementById('gh-gist-id').value||'').trim();
   const token = (document.getElementById('gh-token').value||'').trim();
@@ -1551,13 +1853,13 @@ function connectGithubSync(){
   // localChangeSeq already tracked (pre-existing local edits correctly still read as unsynced).
   // baseState resets to null — any merge base from a previous connection belongs to a (possibly
   // different) Gist and must never be compared against this one.
-  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: 0, baseState: null };
+  githubSyncConfig = { gistId, token, filename: 'mandoos-state.json', lastSyncedAt: null, lastSyncedRemoteUpdatedAt: null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: 0, baseState: null, syncKey: null, pwWrap: null };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Connected — tap "Sync now" to sync', null);
 }
 function disconnectGithubSync(){
-  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: githubSyncConfig.syncedSeq, baseState: githubSyncConfig.baseState };
+  githubSyncConfig = { gistId:'', token:'', filename:'mandoos-state.json', lastSyncedAt:null, lastSyncedRemoteUpdatedAt:null, localChangeSeq: githubSyncConfig.localChangeSeq, syncedSeq: githubSyncConfig.syncedSeq, baseState: githubSyncConfig.baseState, syncKey: null, pwWrap: null };
   saveGithubSyncConfig(githubSyncConfig);
   renderGithubSyncFields();
   showToast('Disconnected. Your Mandoos data is untouched — revoke the token on GitHub if you also want to cut off access there.', null);
@@ -1596,6 +1898,23 @@ async function githubSyncNow(){
   cfg.filename = remote.filename; // adopt whatever file the Gist actually uses, going forward
   let remoteParsed = null;
   try{ remoteParsed = remote.content ? JSON.parse(remote.content) : null; }catch(e){ remoteParsed = null; }
+  // Encrypted Gist (written by a device with the app lock on). Everything that can stop the sync —
+  // lock off, password cancelled, wrong key — happens here, BEFORE anything touches local state.
+  const envelope = isGistEnvelope(remoteParsed) ? remoteParsed : null;
+  if(envelope && !lockRec){
+    renderGithubSyncFields();
+    showToast('This Gist is encrypted. Turn on App lock (Setup → Security) with the same password to sync with it.', null);
+    return;
+  }
+  if(lockRec){
+    const ready = await prepareGistKey(envelope);
+    if(_locked || githubSyncConfig!==cfg) return; // locked / disconnected while the password dialog was open
+    if(!ready){ renderGithubSyncFields(); showToast('Sync cancelled — nothing was changed', null); return; }
+    if(envelope){
+      try{ remoteParsed = JSON.parse(await decryptGistEnvelope(envelope)); }
+      catch(e){ renderGithubSyncFields(); showToast('Sync failed: could not decrypt the Gist.', null); return; }
+    }
+  }
   if(remoteParsed && !validImportShape(remoteParsed)) remoteParsed = null; // corrupted/foreign content — merge against empty rather than garbage
   const remoteState = remoteParsed || emptyMergeState();
   const localState = { items: state.items||[], tags: state.tags||[], history: state.history||[], focusSessions: state.focusSessions||[], settings: state.settings||{} };
@@ -1619,6 +1938,7 @@ async function githubSyncNow(){
 // which would be both wrong here and briefly visible mid-sync), then pushes that same merged
 // state back up so the Gist and this device agree afterward, and records it as the new base.
 async function finishMergeAndPush(cfg, mergedState, remoteUpdatedAt){
+  if(_locked) return;
   setGithubSyncStatusText('Syncing…');
   const applied = applyImportedState(mergedState, true);
   if(!applied){
@@ -1628,7 +1948,7 @@ async function finishMergeAndPush(cfg, mergedState, remoteUpdatedAt){
   }
   try{
     const jsonText = serializeState(); // same payload Export backup already produces — the token itself is never part of it
-    const result = await pushStateToGist(cfg.gistId, cfg.token, cfg.filename, jsonText);
+    const result = await pushStateToGist(cfg.gistId, cfg.token, cfg.filename, await encodeGistContent(jsonText));
     cfg.lastSyncedRemoteUpdatedAt = result.updatedAt;
     cfg.lastSyncedAt = nowISO();
     cfg.baseState = JSON.parse(jsonText); // the just-pushed state IS the new common ancestor for next time
@@ -1723,7 +2043,7 @@ function renderGithubSyncFields(){
     // mutation via commitAndRefresh), so it reflects the current moment, not just whenever the
     // last sync happened to run.
     const dirtyLabel = isGithubSyncDirty() ? '⚠ Unsynced changes on this device' : '✓ Synced with the Gist';
-    setGithubSyncStatusText(`Connected to Gist ${cfg.gistId.slice(0,8)}… · ${dirtyLabel} · Last synced: ${lastSynced}`);
+    setGithubSyncStatusText(`Connected to Gist ${cfg.gistId.slice(0,8)}… · ${dirtyLabel} · Last synced: ${lastSynced}` + (lockRec && cfg.syncKey ? ' · 🔒 Gist copy is encrypted' : ''));
   }
 }
 
@@ -5783,7 +6103,7 @@ function renderBackupStats(){
   }
   el.innerHTML = backupStatsCache;
 }
-function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); renderGithubSyncFields(); renderNotificationFields(); }
+function renderSetup(){ renderTags(); renderThemeToggle(); renderBackupHealth(); renderPullCapToggle(); renderBackupStats(); renderGithubSyncFields(); renderNotificationFields(); renderSecurityFields(); }
 function renderAll(){
   renderToday();
   renderLogChips();
@@ -5791,49 +6111,619 @@ function renderAll(){
   renderSetup();
 }
 
-/* ---------- init ---------- */
-if(!state.settings) state.settings = { pullCap: 3 };
-if(!state.settings.theme) state.settings.theme = 'midnight';
-if(!state.focusSessions) state.focusSessions = [];
-if(!state.history) state.history = [];
-if(state.activeFocusSession === undefined) state.activeFocusSession = null;
-if(state.activeFocusSession && state.activeFocusSession.pausedAt === undefined) state.activeFocusSession.pausedAt = null;
-migrateAgendaRecords();
-// R4-B1/B2/B3: pruneHistory() only mutates state IN MEMORY — it never calls save() itself (by
-// design: callers decide when persisting is warranted). At startup, if lastPullRefreshAt is
-// still fresh, refreshPull() below is skipped, and refreshPull() was the ONLY thing that used to
-// incidentally call save() after this — so a startup prune could silently vanish on the very
-// next reload, un-pruned, and get re-computed (but never actually saved) forever. Capture the
-// count and persist once, right here, exactly when something was actually removed — never
-// unconditionally, and never in a prune->save->prune loop, since this runs exactly once per
-// startup, not from inside save() itself.
-const prunedHistoryCount = pruneHistory(); // C4: once at startup — cheap (one pass), deterministic, never on every keystroke
-if(prunedHistoryCount > 0) save();
-applyTheme();
-// G2: only actually recompute the pull on startup if the persisted refresh is missing/stale —
-// pulledOn is itself a persisted per-item field, so a recent-enough prior refresh is still
-// correct to just render as-is. An invalid/future timestamp is already treated as "none" by
-// loadLastPullRefreshAt, so it can never wrongly suppress this.
-lastPullRefreshAt = loadLastPullRefreshAt();
-if(Date.now()-lastPullRefreshAt > TODAY_STALE_MS) refreshPull(); // stale or never refreshed — recompute now; renderAll() below covers rendering either way
-renderAll();
-initPullToRefresh();
-initTabSwipeNav();
-initDayRolloverWatch();
-initGithubSyncNudge(); // R8: automatic background check + dismissible nudge on load and on returning from 15+ min idle
-registerServiceWorker(); // R10: installability + offline support
-maybeShowDueTodayReminder();
-syncComposerViewportHeight();
-if(window.visualViewport){
-  window.visualViewport.addEventListener('resize', syncComposerViewportHeight);
-  window.visualViewport.addEventListener('scroll', syncComposerViewportHeight);
+/* ---------- App lock: password + fingerprint/face (opt-in) ----------
+   KEY MODEL. When the lock is on, a random AES-256-GCM "data key" (DEK) encrypts `mandoos_state`
+   and `mandoos_github_sync` (the Gist token lives in the latter). The DEK is stored only in
+   wrapped (encrypted) form, once per unlock method:
+     • under a key derived from the password (PBKDF2-SHA256, 310k iterations) → mandoos_lock_v1.dekWrap
+     • under a key from the device passkey (WebAuthn PRF extension)             → mandoos_bio.dekWrap
+   Either method unwraps the same DEK, so changing the password only re-wraps it — the stored data
+   is untouched. PBKDF2 yields 512 bits: the first half is the stored verifier, the second half is
+   the wrapping key; neither the password nor the wrapping key is ever written anywhere. The DEK is
+   in memory only while unlocked, and lockApp() swaps `state` back to an empty placeholder, so the
+   decrypted data doesn't linger in memory or in the DOM. With no lock record none of this runs and
+   the app behaves exactly as it did before the lock existed. */
+function b64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function unb64(s){ return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); }
+function b64url(buf){ return b64(buf).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function unb64url(s){ s = s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4) s += '='; return unb64(s); }
+async function derivePwd(pwd, saltBytes, iter){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pwd), 'PBKDF2', false, ['deriveBits']);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({ name:'PBKDF2', hash:'SHA-256', salt:saltBytes, iterations:iter }, base, 512));
+  const kek = await crypto.subtle.importKey('raw', bits.slice(32), { name:'AES-GCM' }, false, ['encrypt','decrypt']);
+  return { hash: b64(bits.slice(0, 32)), kek };
 }
-window.addEventListener('resize', syncComposerViewportHeight);
-attachTagSuggest(document.getElementById('tag-input'), 'theme');
-initFocusFabPress();
-focusFabTick();
-setInterval(focusFabTick, 1000);
-if(!storageOK){ showToast('Storage unavailable — changes will not be saved this session', null); }
+function newDataKey(){ return crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, true, ['encrypt','decrypt']); }
+async function encryptWith(key, bytes){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, bytes);
+  return { iv: b64(iv), ct: b64(ct) };
+}
+async function decryptWith(key, blob){
+  return crypto.subtle.decrypt({ name:'AES-GCM', iv: unb64(blob.iv) }, key, unb64(blob.ct));
+}
+async function wrapKey(kek, dek){ return encryptWith(kek, new Uint8Array(await crypto.subtle.exportKey('raw', dek))); }
+async function unwrapKey(kek, wrap){
+  const raw = await decryptWith(kek, wrap);
+  return crypto.subtle.importKey('raw', raw, { name:'AES-GCM' }, true, ['encrypt','decrypt']);
+}
+async function makeLockRecord(pwd, dek){
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const d = await derivePwd(pwd, salt, PBKDF2_ITER);
+  return { v:1, salt: b64(salt), iter: PBKDF2_ITER, hash: d.hash, dekWrap: await wrapKey(d.kek, dek), createdAt: new Date().toISOString() };
+}
+// Returns { ok, key } — key is the data key.
+async function verifyPwd(pwd){
+  if(!HAS_SUBTLE || !lockRec) return { ok:false };
+  const d = await derivePwd(pwd, unb64(lockRec.salt), lockRec.iter || PBKDF2_ITER);
+  if(d.hash !== lockRec.hash) return { ok:false };
+  return { ok:true, key: await unwrapKey(d.kek, lockRec.dekWrap) };
+}
+
+/* ----- password dialog (promise-based; replaces prompt()) -----
+   opts: { title, message, fields:[{label, placeholder, autocomplete}], okLabel,
+           submit: async (values) => errorString | null }
+   Resolves with the values once submit() returns null, or null if cancelled. The dialog stays open
+   showing the error when submit() returns one, so a wrong password never loses what was typed. */
+let _pwdDialog = null;
+function askPasswordFlow(opts){
+  if(_pwdDialog) _pwdDialog.finish(null);
+  return new Promise(resolve=>{
+    const sheet = document.getElementById('pwd-sheet'), backdrop = document.getElementById('pwd-backdrop');
+    const okBtn = document.getElementById('pwd-ok-btn'), cancelBtn = document.getElementById('pwd-cancel-btn');
+    const errEl = document.getElementById('pwd-error');
+    document.getElementById('pwd-title').textContent = opts.title;
+    const msg = document.getElementById('pwd-message');
+    msg.textContent = opts.message || ''; msg.style.display = opts.message ? '' : 'none';
+    const fieldsEl = document.getElementById('pwd-fields');
+    fieldsEl.innerHTML = '';
+    const inputs = (opts.fields||[]).map((f, i)=>{
+      const lab = document.createElement('label'); lab.textContent = f.label; lab.htmlFor = 'pwd-in-'+i;
+      const inp = document.createElement('input');
+      inp.type = 'password'; inp.id = 'pwd-in-'+i; inp.placeholder = f.placeholder || '';
+      inp.autocomplete = f.autocomplete || 'off';
+      inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); } });
+      fieldsEl.appendChild(lab); fieldsEl.appendChild(inp);
+      return inp;
+    });
+    errEl.textContent = '';
+    okBtn.textContent = opts.okLabel || 'Continue';
+    okBtn.disabled = false;
+    let busy = false, done = false;
+    const finish = (v)=>{
+      if(done) return; done = true;
+      backdrop.classList.remove('open'); sheet.classList.remove('open');
+      inputs.forEach(i=>{ i.value = ''; });
+      okBtn.onclick = null; cancelBtn.onclick = null; backdrop.onclick = null;
+      _pwdDialog = null;
+      resolve(v);
+    };
+    async function submit(){
+      if(busy || done) return;
+      busy = true; okBtn.disabled = true; errEl.textContent = 'Working…';
+      let err = null;
+      try{ err = opts.submit ? await opts.submit(inputs.map(i=>i.value)) : null; }
+      catch(e){ console.error(e); err = 'Something went wrong — please try again'; }
+      busy = false; okBtn.disabled = false;
+      if(err){ errEl.textContent = err; if(inputs[0]) inputs[0].focus(); return; }
+      finish(inputs.map(i=>i.value));
+    }
+    okBtn.onclick = submit;
+    cancelBtn.onclick = ()=>{ if(!busy) finish(null); };
+    backdrop.onclick = ()=>{ if(!busy) finish(null); };
+    _pwdDialog = { finish };
+    backdrop.classList.add('open'); sheet.classList.add('open');
+    setTimeout(()=>{ if(inputs[0]) inputs[0].focus(); }, 60);
+  });
+}
+
+/* ----- lock screen ----- */
+let _unlocking = false;
+let _bioPlatform = null; // null = still checking, then true/false
+let _bioInFlight = false;
+function loadBio(){ try{ const r = JSON.parse(localStorage.getItem(BIO_KEY)); return r && r.credId ? r : null; }catch(e){ return null; } }
+function bioApiPresent(){ return HAS_SUBTLE && !!window.isSecureContext && !!window.PublicKeyCredential && !!(navigator.credentials); }
+function lockScreenBroken(){ return _locked && !lockRec; } // encrypted data but the lock record is gone
+function updateLockScreen(){
+  const bioOn = !!lockRec && !!loadBio() && bioApiPresent();
+  const bioBtn = document.getElementById('lock-bio-btn'), or = document.getElementById('lock-or');
+  if(bioBtn) bioBtn.style.display = bioOn ? 'flex' : 'none';
+  if(or) or.style.display = bioOn ? 'block' : 'none';
+  const pb = document.getElementById('lock-btn'); if(pb) pb.classList.toggle('secondary', bioOn);
+  const broken = lockScreenBroken();
+  const wrap = document.getElementById('lock-input-wrap'); if(wrap) wrap.style.display = broken ? 'none' : '';
+  if(pb) pb.style.display = broken ? 'none' : '';
+  const sub = document.getElementById('lock-sub');
+  if(sub) sub.textContent = broken ? 'This device\'s data is encrypted, but its lock settings are missing.' : (bioOn ? 'Unlock to continue' : 'Enter your password to continue');
+  const logo = document.getElementById('lock-logo'), hdr = document.querySelector('header img');
+  if(logo && hdr && hdr.src && !logo.src){ logo.src = hdr.src; logo.style.display = 'block'; }
+}
+function showLockScreen(){
+  document.documentElement.classList.add('is-locked');
+  const inp = document.getElementById('lock-input');
+  if(inp){ inp.value = ''; inp.type = 'password'; }
+  const eye = document.getElementById('lock-eye'); if(eye) eye.textContent = '👁';
+  const err = document.getElementById('lock-error'); if(err) err.textContent = '';
+  const fp = document.getElementById('lock-forgot-panel'); if(fp) fp.style.display = 'none';
+  updateLockScreen();
+  // With fingerprint on, go straight to the prompt (if the app is on screen) rather than raising the keyboard
+  if(lockRec && loadBio() && bioApiPresent()){ if(document.visibilityState==='visible') setTimeout(doBioUnlock, 250); }
+  else setTimeout(()=>{ if(inp) inp.focus(); }, 100);
+}
+function toggleLockEye(){
+  const inp = document.getElementById('lock-input'), eye = document.getElementById('lock-eye');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  eye.textContent = show ? '🙈' : '👁';
+  eye.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+function toggleLockForgot(){
+  const p = document.getElementById('lock-forgot-panel');
+  p.style.display = p.style.display==='block' ? 'none' : 'block';
+}
+// The escape hatch for a forgotten password: there is no recovery by design, so the only way
+// forward is to wipe this device's copy (restore from a backup file or the Gist afterwards).
+function eraseDeviceData(){
+  try{
+    [STATE_KEY, GITHUB_SYNC_KEY, LOCK_REC_KEY, BIO_KEY, AUTOLOCK_KEY].forEach(k=>localStorage.removeItem(k));
+  }catch(e){}
+  location.reload();
+}
+async function doUnlock(){
+  if(_unlocking || !_locked) return;
+  const inp = document.getElementById('lock-input'), err = document.getElementById('lock-error');
+  const val = inp.value;
+  if(!val){ err.textContent = 'Please enter your password'; return; }
+  if(!HAS_SUBTLE){ err.textContent = 'Your data is encrypted — open Mandoos from its secure (https) address'; return; }
+  _unlocking = true; err.textContent = 'Checking…';
+  try{
+    const res = await verifyPwd(val);
+    if(res.ok){ inp.value = ''; await finishUnlock(res.key); }
+    else{
+      err.textContent = 'Incorrect password — try again';
+      inp.value = '';
+      inp.classList.add('shake'); setTimeout(()=>inp.classList.remove('shake'), 500);
+      inp.focus();
+    }
+  }catch(e){ console.error(e); err.textContent = 'Could not verify password'; }
+  finally{ _unlocking = false; }
+}
+// Decrypts one stored value (or passes a plaintext one through). Returns { text, plain }.
+async function readStoredText(key, dek){
+  let raw = null;
+  try{ raw = localStorage.getItem(key); }catch(e){}
+  if(!raw) return { text:null, plain:false };
+  const parsed = JSON.parse(raw);
+  if(isEncBlob(parsed)) return { text: new TextDecoder().decode(await decryptWith(dek, parsed)), plain:false };
+  return { text: raw, plain:true };
+}
+// Shared by password and fingerprint unlock. `state` / `githubSyncConfig` are only replaced once
+// BOTH decrypt cleanly, so a failure leaves the empty placeholders (and the stored blobs) untouched.
+async function finishUnlock(key){
+  const err = document.getElementById('lock-error');
+  let newState, newCfg, reEncrypt = false;
+  try{
+    const st = await readStoredText(STATE_KEY, key);
+    const sy = await readStoredText(GITHUB_SYNC_KEY, key);
+    newState = st.text ? JSON.parse(st.text) : emptyState();
+    newCfg = parseGithubSyncConfig(sy.text);
+    reEncrypt = st.plain || sy.plain;
+  }catch(e){
+    console.error('Could not decrypt app data:', e);
+    if(err) err.textContent = 'Could not decrypt your data on this device';
+    return false;
+  }
+  _sessionKey = key;
+  state = newState; githubSyncConfig = newCfg;
+  _locked = false;
+  markActive();
+  if(reEncrypt){ // lock record existed but data was still plaintext (e.g. interrupted setup) — encrypt it now
+    secureWrite(STATE_KEY, JSON.stringify(state));
+    secureWrite(GITHUB_SYNC_KEY, JSON.stringify(githubSyncConfig));
+  }
+  document.documentElement.classList.remove('is-locked');
+  if(err) err.textContent = '';
+  startApp();
+  return true;
+}
+// Close/clear everything that could still hold decrypted text: composers, sheets, drafts, selection.
+function wipeTransientUi(){
+  if(_pwdDialog) _pwdDialog.finish(null);
+  document.querySelectorAll('.sheet.open, .sheet-backdrop.open').forEach(el=>el.classList.remove('open'));
+  document.body.classList.remove('composer-open');
+  try{ unlockBodyScroll(); }catch(e){}
+  try{ if(typeof logSelectMode!=='undefined' && logSelectMode) exitLogSelectMode(); }catch(e){}
+  try{ confirmYesCallback = null; confirmNoCallback = null; }catch(e){}
+  try{ editDraft = null; editOriginal = null; editPromoteKind = null; }catch(e){}
+  const ed = document.getElementById('edit-sheet'); if(ed) ed.innerHTML = '';
+  document.querySelectorAll('#add-sheet input, #add-sheet textarea').forEach(el=>{ el.value = ''; });
+  try{ pendingTags = []; pendingToggles = {}; pendingAgendaPoints = []; pendingKind = null; }catch(e){}
+  const t = document.getElementById('toast'); if(t) t.classList.remove('show');
+}
+async function lockApp(){
+  if(!lockRec || _locked) return;
+  _locked = true;                    // from here save() is a no-op
+  await flushSecureWrites();         // anything already queued still needs the key
+  _sessionKey = null;
+  state = lockedPlaceholderState();
+  githubSyncConfig = defaultGithubSyncConfig();
+  backupStatsDirty = true; behaviorHintsDirty = true;
+  wipeTransientUi();
+  applyTheme();
+  renderAll();                       // renders the empty placeholder so no task text stays in the DOM
+  showLockScreen();
+}
+function lockedPlaceholderState(){
+  return { items:[], tags:[], settings:{ pullCap:3, theme:'midnight' }, focusSessions:[], history:[], activeFocusSession:null };
+}
+
+/* ----- turning the lock on / off, changing the password ----- */
+async function createLock(pwd){
+  const dek = await newDataKey();
+  const rec = await makeLockRecord(pwd, dek);
+  // Record first, then data: if interrupted in between, unlock still works (plaintext data under a
+  // record is accepted and re-encrypted — see finishUnlock). The reverse order could strand data.
+  localStorage.setItem(LOCK_REC_KEY, JSON.stringify(rec));
+  lockRec = rec; _sessionKey = dek;
+  secureWrite(STATE_KEY, JSON.stringify(state));
+  secureWrite(GITHUB_SYNC_KEY, JSON.stringify(githubSyncConfig));
+  await flushSecureWrites();
+  let ok = false;
+  try{ ok = isEncBlob(JSON.parse(localStorage.getItem(STATE_KEY))); }catch(e){}
+  if(!ok){ // couldn't store the encrypted copy — roll back to plain so nothing is lost
+    lockRec = null; _sessionKey = null;
+    try{ localStorage.removeItem(LOCK_REC_KEY); localStorage.setItem(STATE_KEY, JSON.stringify(state)); localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(githubSyncConfig)); }catch(e){}
+    throw new Error('encrypted copy could not be stored');
+  }
+  markActive();
+}
+async function enableAppLock(){
+  if(lockRec) return;
+  if(!HAS_SUBTLE){ showToast('App lock needs the secure (https) address of Mandoos.', null); return; }
+  const done = await askPasswordFlow({
+    title: 'Turn on app lock',
+    message: 'Choose a password (at least 6 characters). It encrypts your tasks and GitHub token on this device. If you forget it, the data on this device can\'t be recovered — keep an exported backup or your GitHub Gist.',
+    fields: [{ label:'New password', placeholder:'At least 6 characters', autocomplete:'new-password' }, { label:'Confirm password', placeholder:'Repeat the password', autocomplete:'new-password' }],
+    okLabel: 'Turn on',
+    submit: async (v)=>{
+      if(v[0].length < 6) return 'Use at least 6 characters';
+      if(v[0] !== v[1]) return 'The passwords do not match';
+      try{ await createLock(v[0]); }catch(e){ console.error(e); return 'Could not turn the lock on — nothing was changed'; }
+      if(githubSyncConfig.gistId && githubSyncConfig.token){
+        try{ await ensureSyncKey(v[0]); await flushSecureWrites(); }catch(e){ console.warn('Gist key setup deferred:', e); }
+      }
+      return null;
+    }
+  });
+  if(done){ renderSetup(); showToast('App lock is on — your data is now encrypted ✓', null); }
+}
+async function removeLock(){
+  while(_flushP) await _flushP;
+  // The Gist sync key must not be left readable in plain storage
+  githubSyncConfig.syncKey = null; githubSyncConfig.pwWrap = null;
+  // Plain copies first, then drop the record (see createLock for why this order)
+  localStorage.setItem(STATE_KEY, JSON.stringify(state));
+  localStorage.setItem(GITHUB_SYNC_KEY, JSON.stringify(githubSyncConfig));
+  for(const k of Object.keys(_pendingWrites)) delete _pendingWrites[k];
+  localStorage.removeItem(LOCK_REC_KEY);
+  localStorage.removeItem(BIO_KEY);
+  lockRec = null; _sessionKey = null;
+}
+async function disableAppLock(){
+  if(!lockRec) return;
+  const done = await askPasswordFlow({
+    title: 'Turn off app lock',
+    message: 'Your data will be stored on this device without encryption again, and fingerprint unlock will be removed.' + ((githubSyncConfig.gistId && githubSyncConfig.syncKey) ? ' Your Gist is encrypted, so GitHub Sync will stop working with it until the lock is on again.' : '') + ' Enter your password to confirm.',
+    fields: [{ label:'Password', placeholder:'Your app password', autocomplete:'current-password' }],
+    okLabel: 'Turn off',
+    submit: async (v)=>{
+      const r = await verifyPwd(v[0]);
+      if(!r.ok) return 'Incorrect password';
+      try{ await removeLock(); }catch(e){ console.error(e); return 'Could not turn the lock off — nothing was changed'; }
+      return null;
+    }
+  });
+  if(done){ renderSetup(); showToast('App lock is off', null); }
+}
+async function changePassword(){
+  if(!lockRec) return;
+  const done = await askPasswordFlow({
+    title: 'Change password',
+    message: 'Your data stays as it is — only the password that unlocks it changes. Fingerprint unlock keeps working.',
+    fields: [
+      { label:'Current password', placeholder:'Current password', autocomplete:'current-password' },
+      { label:'New password', placeholder:'At least 6 characters', autocomplete:'new-password' },
+      { label:'Confirm new password', placeholder:'Repeat the new password', autocomplete:'new-password' }
+    ],
+    okLabel: 'Save password',
+    submit: async (v)=>{
+      if(v[1].length < 6) return 'The new password needs at least 6 characters';
+      if(v[1] !== v[2]) return 'The new passwords do not match';
+      const r = await verifyPwd(v[0]);
+      if(!r.ok) return 'Current password is incorrect';
+      try{
+        const rec = await makeLockRecord(v[1], r.key); // same data key, re-wrapped under the new password
+        localStorage.setItem(LOCK_REC_KEY, JSON.stringify(rec));
+        lockRec = rec;
+        if(typeof rewrapSyncKeyForPassword==='function') await rewrapSyncKeyForPassword(v[1]);
+      }catch(e){ console.error(e); return 'Could not change the password — nothing was changed'; }
+      return null;
+    }
+  });
+  if(done){ renderSetup(); showToast('Password changed ✓', null); }
+}
+
+/* ----- fingerprint / face unlock (WebAuthn passkey) -----
+   Needs a secure page and a platform authenticator. Where the authenticator supports the PRF
+   extension the passkey also yields a secret that unwraps the data key, so the fingerprint unlocks
+   everything. Without PRF it couldn't decrypt anything, so it is not offered (the password stays).
+   There is no server, so the assertion is verified on the device: challenge, origin, the
+   "user verified" flag, and the signature against the stored public key. */
+(async ()=>{
+  try{ _bioPlatform = bioApiPresent() && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }
+  catch(e){ _bioPlatform = false; }
+  updateLockScreen();
+  if(!_locked) renderSecurityFields();
+})();
+async function prfToKey(out){ return crypto.subtle.importKey('raw', new Uint8Array(out).slice(0, 32), { name:'AES-GCM' }, false, ['encrypt','decrypt']); }
+// WebAuthn ES256 signatures are DER-encoded; WebCrypto expects raw r||s (32 bytes each)
+function derToRawSig(der){
+  let p = 2; if(der[1] & 0x80) p += der[1] & 0x7f;
+  const read = ()=>{ p++; const len = der[p++]; let v = der.slice(p, p+len); p += len;
+    while(v.length > 32 && v[0] === 0) v = v.slice(1);
+    const out = new Uint8Array(32); out.set(v, 32 - v.length); return out; };
+  const r = read(), s = read(), raw = new Uint8Array(64); raw.set(r, 0); raw.set(s, 32); return raw;
+}
+async function verifyAssertionSig(rec, resp){
+  if(!rec.pubKey || (rec.alg !== -7 && rec.alg !== -257)) return true; // no key recorded: rely on the UV flag
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', resp.clientDataJSON));
+  const ad = new Uint8Array(resp.authenticatorData), data = new Uint8Array(ad.length + hash.length);
+  data.set(ad, 0); data.set(hash, ad.length);
+  const sig = new Uint8Array(resp.signature);
+  if(rec.alg === -7){
+    const k = await crypto.subtle.importKey('spki', unb64(rec.pubKey), { name:'ECDSA', namedCurve:'P-256' }, false, ['verify']);
+    return crypto.subtle.verify({ name:'ECDSA', hash:'SHA-256' }, k, derToRawSig(sig), data);
+  }
+  const k = await crypto.subtle.importKey('spki', unb64(rec.pubKey), { name:'RSASSA-PKCS1-v1_5', hash:'SHA-256' }, false, ['verify']);
+  return crypto.subtle.verify('RSASSA-PKCS1-v1_5', k, sig, data);
+}
+// Runs the fingerprint / face prompt and checks the result. Returns the PRF output, if any.
+async function bioAssert(rec){
+  expectExternalUi();
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const opts = { challenge, allowCredentials:[{ type:'public-key', id: unb64url(rec.credId) }], userVerification:'required', timeout:60000 };
+  if(rec.prf) opts.extensions = { prf:{ eval:{ first: unb64(rec.prfSalt) } } };
+  const a = await navigator.credentials.get({ publicKey: opts });
+  const cd = JSON.parse(new TextDecoder().decode(a.response.clientDataJSON));
+  if(cd.type !== 'webauthn.get' || cd.challenge !== b64url(challenge) || cd.origin !== location.origin) throw new Error('Biometric response did not match this request');
+  if(!(new Uint8Array(a.response.authenticatorData)[32] & 0x04)) throw new Error('The device did not confirm your fingerprint or face');
+  if(!(await verifyAssertionSig(rec, a.response))) throw new Error('Biometric signature check failed');
+  const ext = a.getClientExtensionResults ? a.getClientExtensionResults() : {};
+  return ext.prf && ext.prf.results ? ext.prf.results.first : null;
+}
+async function doBioUnlock(){
+  const rec = loadBio();
+  if(!rec || !lockRec || _bioInFlight || !_locked) return;
+  const err = document.getElementById('lock-error');
+  if(!rec.prf || !rec.dekWrap){ err.textContent = 'This device\'s fingerprint can\'t decrypt your data — use your password, then turn fingerprint unlock off and on again in Setup'; return; }
+  _bioInFlight = true; err.textContent = '';
+  try{
+    const out = await bioAssert(rec);
+    if(!out) throw new Error('Your device did not return the unlock secret — use your password');
+    const key = await unwrapKey(await prfToKey(out), rec.dekWrap);
+    await finishUnlock(key);
+  }catch(e){
+    console.warn('Biometric unlock failed:', e);
+    err.textContent = e.name === 'NotAllowedError' ? 'Fingerprint / face cancelled — tap to try again, or use your password' : (e.message || 'Biometric unlock failed — use your password');
+  }finally{ _bioInFlight = false; }
+}
+async function enableBio(){
+  if(!lockRec) return;
+  if(!bioApiPresent() || !_bioPlatform){ showToast('Fingerprint unlock isn\'t available on this device or page.', null); return; }
+  let dek = null;
+  const done = await askPasswordFlow({
+    title: 'Turn on fingerprint / face unlock',
+    message: 'Confirm your password. Your device will then ask for your fingerprint or face to create a passkey for Mandoos.',
+    fields: [{ label:'Password', placeholder:'Your app password', autocomplete:'current-password' }],
+    okLabel: 'Continue',
+    submit: async (v)=>{ const r = await verifyPwd(v[0]); if(!r.ok) return 'Incorrect password'; dek = r.key; return null; }
+  });
+  if(!done || !dek) return;
+  _bioInFlight = true; expectExternalUi();
+  try{
+    const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+    const cred = await navigator.credentials.create({ publicKey:{
+      rp:{ name:'Mandoos' },
+      user:{ id: crypto.getRandomValues(new Uint8Array(16)), name:'mandoos', displayName:'Mandoos' },
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      pubKeyCredParams:[{ type:'public-key', alg:-7 }, { type:'public-key', alg:-257 }],
+      authenticatorSelection:{ authenticatorAttachment:'platform', userVerification:'required', residentKey:'preferred' },
+      timeout:60000, attestation:'none',
+      extensions:{ prf:{ eval:{ first: prfSalt } } }
+    }});
+    const r = cred.response;
+    const pub = r.getPublicKey ? r.getPublicKey() : null;
+    const rec = { credId: b64url(cred.rawId), prf:false, prfSalt: b64(prfSalt), pubKey: pub ? b64(pub) : null, alg: r.getPublicKeyAlgorithm ? r.getPublicKeyAlgorithm() : null, createdAt: new Date().toISOString(), dekWrap:null };
+    const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+    if(ext.prf && ext.prf.enabled){
+      // Some authenticators return the PRF secret at creation; otherwise one more prompt fetches it
+      let out = ext.prf.results && ext.prf.results.first;
+      if(!out){ rec.prf = true; try{ out = await bioAssert(rec); }catch(e){ console.warn('PRF read failed:', e); out = null; } }
+      if(out){ rec.dekWrap = await wrapKey(await prfToKey(out), dek); rec.prf = true; }
+      else rec.prf = false;
+    }
+    if(!rec.prf){ showToast('This device\'s fingerprint can\'t unlock encrypted data — keep using your password.', null); return; }
+    localStorage.setItem(BIO_KEY, JSON.stringify(rec));
+    renderSetup();
+    showToast('Fingerprint / face unlock is on ✓', null);
+  }catch(e){
+    console.warn('Passkey creation failed:', e);
+    showToast(e.name === 'NotAllowedError' ? 'Cancelled — fingerprint unlock not turned on.' : 'Could not set up fingerprint unlock.', null);
+  }finally{ _bioInFlight = false; markActive(); }
+}
+function disableBio(){
+  showConfirm('Turn off fingerprint / face unlock on this device? You will unlock with your password. The passkey itself can be deleted from your phone\'s password manager.',
+    ()=>{ try{ localStorage.removeItem(BIO_KEY); }catch(e){} renderSetup(); showToast('Fingerprint unlock is off', null); },
+    'Turn off', 'Keep it');
+}
+
+/* ----- auto-lock -----
+   Locks after N minutes without a tap or key press (time spent in other apps counts), or at once
+   on leaving the app. Stored per device. Default: 5 minutes. */
+const AUTOLOCK_OPTIONS = [['0','Never'],['leave','When I leave the app'],['1','After 1 minute'],['5','After 5 minutes'],['15','After 15 minutes'],['30','After 30 minutes']];
+let _lastActive = Date.now();
+// Leaving the page on purpose (the fingerprint prompt, the Import file picker) must not trigger "lock when I leave"
+let _externalUiUntil = 0;
+function expectExternalUi(){ _externalUiUntil = Date.now() + 120000; }
+function autoLockSetting(){ let v = null; try{ v = localStorage.getItem(AUTOLOCK_KEY); }catch(e){} return AUTOLOCK_OPTIONS.some(o=>o[0]===v) ? v : '5'; }
+function setAutoLock(v){
+  try{ localStorage.setItem(AUTOLOCK_KEY, v); }catch(e){}
+  markActive();
+  showToast('Auto-lock: ' + AUTOLOCK_OPTIONS.find(o=>o[0]===v)[1].toLowerCase(), null);
+}
+function markActive(){ _lastActive = Date.now(); }
+function autoLockDue(){
+  const mins = Number(autoLockSetting());
+  return !!lockRec && !_locked && mins > 0 && Date.now() - _lastActive >= mins*60000;
+}
+['pointerdown','keydown','wheel','touchstart'].forEach(ev=>window.addEventListener(ev, markActive, { passive:true, capture:true }));
+setInterval(()=>{ if(autoLockDue()) lockApp(); }, 15000);
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden'){
+    if(lockRec && !_locked && autoLockSetting()==='leave' && !_bioInFlight && Date.now() > _externalUiUntil) lockApp();
+    return;
+  }
+  if(autoLockDue()) lockApp();
+  else if(_locked && lockRec && loadBio()) setTimeout(doBioUnlock, 250);
+});
+
+/* ----- Setup → Security ----- */
+function renderSecurityFields(){
+  const wrap = document.getElementById('security-fields');
+  if(!wrap) return;
+  if(!HAS_SUBTLE){
+    wrap.innerHTML = `<div class="sec-card"><div class="sec-card-body" style="margin:0;">Not available here — the app lock needs Mandoos to be opened from its secure (https) web address, not as a file.</div></div>`;
+    return;
+  }
+  if(!lockRec){
+    wrap.innerHTML = `<div class="sec-card">
+      <div class="sec-card-head"><span>App lock</span><span class="sec-badge">Off</span></div>
+      <div class="sec-card-body">Choose a password that opens Mandoos. Your tasks and GitHub token are then stored encrypted on this device, and the app locks itself when you're away.</div>
+      <button class="btn primary" style="width:100%; box-sizing:border-box;" onclick="enableAppLock()">Turn on app lock</button>
+    </div>`;
+    return;
+  }
+  const bio = loadBio();
+  let bioBody;
+  if(!bioApiPresent()) bioBody = `<div class="sec-card-body" style="margin:0;">Not available here — it needs the secure web address of Mandoos on a device with fingerprint or face unlock.</div>`;
+  else if(_bioPlatform === null) bioBody = `<div class="sec-card-body" style="margin:0;">Checking this device…</div>`;
+  else if(bio) bioBody = `<div class="sec-card-body">${bio.prf ? 'Your fingerprint or face opens the app and decrypts your data. Your password still works at any time.' : 'Set up before this device could decrypt data with it. Turn it off and on again to upgrade.'}</div>
+      <button class="btn ghost" style="width:100%; box-sizing:border-box;" onclick="disableBio()">Turn off</button>`;
+  else if(!_bioPlatform) bioBody = `<div class="sec-card-body" style="margin:0;">This device has no fingerprint or face unlock set up for apps. Set one up in your phone's settings, then reopen Mandoos.</div>`;
+  else bioBody = `<div class="sec-card-body">Open Mandoos with your fingerprint or face instead of typing the password. The password keeps working as a fallback. Needs a device that can release the encryption key biometrically — Mandoos checks when you turn it on.</div>
+      <button class="btn primary" style="width:100%; box-sizing:border-box;" onclick="enableBio()">Turn on</button>`;
+  const sel = autoLockSetting();
+  wrap.innerHTML = `
+    <div class="sec-card">
+      <div class="sec-card-head"><span>App lock</span><span class="sec-badge on">On</span></div>
+      <div class="sec-card-body">Your tasks, history and GitHub token are encrypted on this device (AES-256). <b>If you forget the password they can't be recovered</b> — restore from an exported backup or your Gist.</div>
+      <div class="sec-actions">
+        <button class="btn primary" onclick="lockApp()">Lock now</button>
+        <button class="btn ghost" onclick="changePassword()">Change password</button>
+        <button class="btn ghost" onclick="disableAppLock()">Turn off</button>
+      </div>
+    </div>
+    <div class="sec-card">
+      <div class="sec-card-head"><span>Fingerprint / face unlock</span><span class="sec-badge${bio?' on':''}">${bio?'On':'Off'}</span></div>
+      ${bioBody}
+    </div>
+    <div class="sec-card">
+      <div class="sec-card-head"><span>Auto-lock</span></div>
+      <div class="sec-card-body">Locks Mandoos when it's left idle (time in other apps counts), so nobody can open it on your unlocked phone. An unsaved form is closed when it locks.</div>
+      <select class="sec-select" aria-label="Auto-lock" onchange="setAutoLock(this.value)">${AUTOLOCK_OPTIONS.map(o=>`<option value="${o[0]}"${o[0]===sel?' selected':''}>${o[1]}</option>`).join('')}</select>
+    </div>`;
+}
+
+/* ---------- layout mode (phone / fold / desktop) ----------
+   The layout itself is pure CSS (see "Unfolded / wide layout"). This only mirrors the active
+   breakpoint onto <html data-layout>, kept current as the window is resized or the device is folded
+   and unfolded. */
+function layoutMode(){
+  if(typeof window.matchMedia!=='function') return 'phone';
+  if(window.matchMedia('(min-width:1100px)').matches) return 'desktop';
+  if(window.matchMedia('(min-width:720px)').matches) return 'fold';
+  return 'phone';
+}
+function applyLayoutMode(){
+  const m = layoutMode();
+  if(document.documentElement.getAttribute('data-layout')!==m) document.documentElement.setAttribute('data-layout', m);
+}
+applyLayoutMode();
+window.addEventListener('resize', applyLayoutMode);
+
+/* ---------- init ---------- */
+// Boot is split so the lock can sit in front of it: normalizeLoadedState() + the first render run
+// each time a state has just been loaded (immediately when there's no lock, after every unlock
+// when there is one); the listeners/intervals in the second half are attached exactly once.
+function normalizeLoadedState(){
+  if(!state.settings) state.settings = { pullCap: 3 };
+  if(!state.settings.theme) state.settings.theme = 'midnight';
+  if(!state.focusSessions) state.focusSessions = [];
+  if(!state.history) state.history = [];
+  if(state.activeFocusSession === undefined) state.activeFocusSession = null;
+  if(state.activeFocusSession && state.activeFocusSession.pausedAt === undefined) state.activeFocusSession.pausedAt = null;
+  migrateAgendaRecords();
+  // R4-B1/B2/B3: pruneHistory() only mutates state IN MEMORY — it never calls save() itself (by
+  // design: callers decide when persisting is warranted). At startup, if lastPullRefreshAt is
+  // still fresh, refreshPull() below is skipped, and refreshPull() was the ONLY thing that used to
+  // incidentally call save() after this — so a startup prune could silently vanish on the very
+  // next reload, un-pruned, and get re-computed (but never actually saved) forever. Capture the
+  // count and persist once, right here, exactly when something was actually removed — never
+  // unconditionally, and never in a prune->save->prune loop, since this runs exactly once per
+  // startup, not from inside save() itself.
+  const prunedHistoryCount = pruneHistory(); // C4: once at startup — cheap (one pass), deterministic, never on every keystroke
+  if(prunedHistoryCount > 0) save();
+  applyTheme();
+  // G2: only actually recompute the pull on startup if the persisted refresh is missing/stale —
+  // pulledOn is itself a persisted per-item field, so a recent-enough prior refresh is still
+  // correct to just render as-is. An invalid/future timestamp is already treated as "none" by
+  // loadLastPullRefreshAt, so it can never wrongly suppress this.
+  lastPullRefreshAt = loadLastPullRefreshAt();
+  if(Date.now()-lastPullRefreshAt > TODAY_STALE_MS) refreshPull(); // stale or never refreshed — recompute now; renderAll() below covers rendering either way
+}
+let _uiInitDone = false;
+function startApp(){
+  normalizeLoadedState();
+  backupStatsDirty = true; behaviorHintsDirty = true;
+  renderAll();
+  if(_uiInitDone){
+    // Re-entering after a lock: the listeners below are already attached
+    checkForNewerGistData('load');
+    maybeShowDueTodayReminder();
+    focusFabTick();
+    return;
+  }
+  _uiInitDone = true;
+  initPullToRefresh();
+  initTabSwipeNav();
+  initDayRolloverWatch();
+  initGithubSyncNudge(); // R8: automatic background check + dismissible nudge on load and on returning from 15+ min idle
+  maybeShowDueTodayReminder();
+  syncComposerViewportHeight();
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize', syncComposerViewportHeight);
+    window.visualViewport.addEventListener('scroll', syncComposerViewportHeight);
+  }
+  window.addEventListener('resize', syncComposerViewportHeight);
+  attachTagSuggest(document.getElementById('tag-input'), 'theme');
+  initFocusFabPress();
+  focusFabTick();
+  setInterval(focusFabTick, 1000);
+  if(!storageOK){ showToast('Storage unavailable — changes will not be saved this session', null); }
+}
+registerServiceWorker(); // R10: installability + offline support — independent of the lock
+if(_locked){ showLockScreen(); }
+else startApp();
 </script>
 </body>
 </html>

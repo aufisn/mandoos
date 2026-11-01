@@ -1,7 +1,7 @@
 // Mandoos Service Worker — enables "Add to Home Screen" installability and basic offline
 // support. Bump CACHE_NAME on every deploy that changes any precached file, so old caches get
 // cleaned up and clients pick up the new version promptly (skipWaiting + clients.claim below).
-const CACHE_NAME = 'mandoos-v1';
+const CACHE_NAME = 'mandoos-v2';
 const PRECACHE_URLS = [
   './',
   './index.html',
