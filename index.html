@@ -92,7 +92,27 @@
   .item-card.kind-decision{border-color:var(--decision);}
   .item-card.kind-vault{border-color:var(--border-strong);}
   .item-card.kind-agenda{border-color:var(--agenda);}
-  .item-card.completed{opacity:.55;}
+  /* Completed vs Active must read at a glance when both are listed: completed cards go grey (kind
+     colours drop out), get a dashed outline, struck-through text and a check badge — never just
+     "a bit fainter". The Log also puts a labelled divider between the two groups. */
+  .item-card.completed{background:var(--surface-2); border:1.5px dashed var(--border-strong); opacity:.85;
+    filter:grayscale(1);}
+  .item-card.completed .txt{text-decoration:line-through; text-decoration-thickness:1px; color:var(--text-3); padding-right:30px;}
+  .done-badge{position:absolute; top:11px; right:12px; width:20px; height:20px; border-radius:50%;
+    border:1.5px solid var(--text-3); color:var(--text-3); font-size:11px; font-weight:700; line-height:1;
+    display:flex; align-items:center; justify-content:center;}
+  .log-group-head{display:flex; align-items:center; gap:8px; margin:14px 2px 8px; font-size:11.5px; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase; color:var(--text-2);}
+  .log-group-head::after{content:''; flex:1; height:0; border-top:1px solid var(--border-strong);}
+  .log-group-head.done{color:var(--text-3);}
+  .log-group-head.done::after{border-top-style:dashed;}
+  .log-group-head:first-child{margin-top:2px;}
+  #log-status-btn{flex:0 0 auto; padding:0 12px; white-space:nowrap; min-width:78px;}
+  #log-status-btn.filtered{background:var(--accent-bg); color:var(--accent); border-color:var(--accent); font-weight:600;}
+  .due-quick{display:flex; gap:6px; margin:-4px 0 10px;}
+  .due-quick button{flex:1; border:0.5px solid var(--border-strong); background:var(--surface); color:var(--text-2);
+    border-radius:8px; padding:7px 0; font-size:12px;}
+  .due-required .lbl{color:var(--accent) !important; font-weight:600;}
   .item-card .txt{font-size:14.5px; line-height:1.4;}
   .item-meta{display:flex; gap:8px; margin-top:6px; align-items:center; flex-wrap:wrap;}
   .pill{font-size:10.5px; font-family:'JetBrains Mono',monospace; padding:2px 7px; border-radius:999px;
@@ -490,7 +510,7 @@
     .screen{align-self:center; width:100%; max-width:1200px; padding:84px 28px 48px;}
     #screen-setup{max-width:760px;}
     #today-list,#log-list{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:14px; align-items:start;}
-    #today-list > .empty-hint,#log-list > .empty-hint{grid-column:1/-1;}
+    #today-list > .empty-hint,#log-list > .empty-hint,#log-list > .log-group-head{grid-column:1/-1;}
     #fab{right:28px; bottom:28px;}
     #focus-fab{right:28px; bottom:94px;}
     #log-bulk-bar,#log-bulk-tag-panel{left:78px; transform:none; width:calc(100% - 78px); max-width:none;}
@@ -558,6 +578,7 @@
         <input type="text" id="log-search" placeholder="Search, or try &overdue, &due tomorrow, @name, #tag">
         <button type="button" id="log-search-clear" aria-label="Clear search" onclick="clearLogSearch()">✕</button>
       </div>
+      <button type="button" class="btn ghost" id="log-status-btn" onclick="cycleLogStatusFilter()" aria-label="Showing all items — tap to change">All</button>
       <button type="button" class="btn ghost" style="flex:0 0 auto; padding:0 14px;" onclick="enterLogSelectMode()">Select</button>
     </div>
     <div class="chiprow" id="log-chips"></div>
@@ -713,6 +734,11 @@
         <div id="add-due-block">
           <div class="lbl" style="font-size:11px; color:var(--text-3); margin:0 0 4px;" id="add-due-label">Due date (optional)</div>
           <input type="date" id="add-due">
+          <div class="due-quick" id="add-due-quick" style="display:none;">
+            <button type="button" onclick="setDueQuick('add-due',0)">Today</button>
+            <button type="button" onclick="setDueQuick('add-due',1)">Tomorrow</button>
+            <button type="button" onclick="setDueQuick('add-due',7)">Next week</button>
+          </div>
         </div>
         <!-- Agenda's own Date/Assigned-to fields render here instead (see renderAgendaComposer) —
              one shared "More details" disclosure per Kind, never two stacked on top of each other. -->
@@ -850,7 +876,7 @@
   </div>
   <div class="help-row" style="border-left:3px solid var(--olive); padding-left:10px;">
     <div class="help-action" style="color:var(--olive);">Action — Do it</div>
-    <div class="help-desc">Use Action for a specific piece of work that needs to be completed. Actions have clear ownership and should be concrete enough to be marked done.</div>
+    <div class="help-desc">Use Action for a specific piece of work that needs to be completed. Actions have clear ownership and should be concrete enough to be marked done. Every Action has a due date — you can't save one without it.</div>
   </div>
   <div class="help-row" style="border-left:3px solid var(--decision); padding-left:10px;">
     <div class="help-action" style="color:var(--decision);">Decision — Choose, record why, and learn</div>
@@ -1363,6 +1389,66 @@ function todayStr(){
   const pad = n=>String(n).padStart(2,'0');
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 }
+// Local YYYY-MM-DD for today + n days (n may be 0). Same local-calendar convention as todayStr().
+function dateStrPlusDays(n){
+  const d = new Date();
+  d.setHours(12,0,0,0); // noon: immune to DST edges when adding whole days
+  d.setDate(d.getDate()+n);
+  const pad = x=>String(x).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
+/* ---------- Actions always have a due date ----------
+   An Action is "a specific piece of work that needs to be completed", so it always carries a due
+   date. New/edited Actions can't be saved without one (see requireActionDue); for existing data the
+   fallback is: an open Action with none gets TODAY ("in the absence of any other choice"), a closed
+   one gets the day it was completed (else created), so history isn't made to look overdue. Applied
+   on startup, on import and on every sync merge — through the same normalizers, not a new path. */
+function localDayOfISO(iso){
+  const t = Date.parse(iso);
+  if(isNaN(t)) return null;
+  const d = new Date(t), pad = x=>String(x).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
+function actionDueFallback(item){
+  if(item.status==='closed') return localDayOfISO(item.closedAt) || localDayOfISO(item.createdAt) || todayStr();
+  return todayStr();
+}
+// Returns true if it changed the item.
+function ensureActionDue(item){
+  if(!item || item.kind!=='action' || item.dueDate) return false;
+  item.dueDate = actionDueFallback(item);
+  return true;
+}
+// Startup migration for data saved before the rule existed. Returns how many OPEN actions it fixed.
+function migrateActionDueDates(){
+  let openFixed = 0;
+  (state.items||[]).forEach(item=>{
+    const wasOpen = item.status!=='closed';
+    if(ensureActionDue(item) && wasOpen) openFixed++;
+  });
+  return openFixed;
+}
+// Sync: bring base/remote to the same rule IN MEMORY before the three-way merge, so a device that
+// already assigned dates and one that hasn't yet agree on the result instead of conflicting.
+function normalizeMergeStateActionDue(st){
+  if(st && Array.isArray(st.items)) st.items.forEach(ensureActionDue);
+  return st;
+}
+// One shared "is this action's due date missing" gate for the Add and Edit composers.
+const ACTION_DUE_MSG = 'Actions need a due date — pick one (or tap Today).';
+function setDueQuick(inputId, days){
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  el.value = dateStrPlusDays(days);
+  el.dispatchEvent(new Event('input', { bubbles:true }));
+}
+function dueQuickPicksHtml(inputId, id){
+  return `<div class="due-quick"${id?` id="${id}"`:''}>
+    <button type="button" onclick="setDueQuick('${inputId}',0)">Today</button>
+    <button type="button" onclick="setDueQuick('${inputId}',1)">Tomorrow</button>
+    <button type="button" onclick="setDueQuick('${inputId}',7)">Next week</button>
+  </div>`;
+}
 // One shared resolution for every day-based Snooze path (Edit 1d/3d/7d, Log's bulk Snooze,
 // End-of-Day Snooze) — a Snooze always means "hidden until the END of the target day," never
 // "N*24h from whatever time the button happened to be tapped." Two Snoozes sharing the same
@@ -1506,6 +1592,7 @@ function normalizeImportedItem(raw){
   if(typeof item.createdAt!=='string' || isNaN(Date.parse(item.createdAt))) item.createdAt = nowISO();
   if(item.closedAt!=null && (typeof item.closedAt!=='string' || isNaN(Date.parse(item.closedAt)))) item.closedAt = null;
   if(typeof item.dueDate!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate)) item.dueDate = null;
+  ensureActionDue(item); // Actions always carry a due date (status/closedAt were sanitized above, so the fallback is accurate)
   if(item.snoozedUntil!=null && (typeof item.snoozedUntil!=='string' || isNaN(Date.parse(item.snoozedUntil)))) item.snoozedUntil = null;
   // R5: the Repeat/recurrence feature itself was removed (see SUPPORTED_RECURRENCE's own
   // comment) — these fields are only ever READ from an old backup/old item now, never written by
@@ -1917,12 +2004,15 @@ async function githubSyncNow(){
   }
   if(remoteParsed && !validImportShape(remoteParsed)) remoteParsed = null; // corrupted/foreign content — merge against empty rather than garbage
   const remoteState = remoteParsed || emptyMergeState();
-  const localState = { items: state.items||[], tags: state.tags||[], history: state.history||[], focusSessions: state.focusSessions||[], settings: state.settings||{} };
+  // Local items go through the same rule as copies (not mutating live state here) so all three sides of the merge agree
+  const localState = { items: (state.items||[]).map(i=> (i && i.kind==='action' && !i.dueDate) ? Object.assign({}, i, { dueDate: actionDueFallback(i) }) : i), tags: state.tags||[], history: state.history||[], focusSessions: state.focusSessions||[], settings: state.settings||{} };
   // No base yet (this device's first-ever sync to this Gist) degrades to an empty base — which
   // in turn degrades the merge to "union everything, nothing conflicts" for any item that
   // doesn't collide by id, exactly the behavior wanted for "second device picks up the Gist's
   // existing data" and "first push from a brand-new device" alike.
-  const baseState = cfg.baseState || emptyMergeState();
+  const baseState = cfg.baseState ? JSON.parse(JSON.stringify(cfg.baseState)) : emptyMergeState(); // cloned: normalized in memory only, the stored base is never touched here
+  normalizeMergeStateActionDue(remoteState);
+  normalizeMergeStateActionDue(baseState);
 
   const { mergedState, conflicts } = computeStateMerge(baseState, localState, remoteState);
 
@@ -2901,6 +2991,7 @@ function renderItemRow(item, opts){
     ${rightAction}
     <div class="item-card ${kindClass(item)}${isClosed?' completed':''}${selectable?' select-mode':''}${isSelected?' selected':''}${showTimerBtn?' has-timer-btn':''}${focusStateClass}" data-id="${item.id}">
       ${selectable ? `<span class="select-check">✓</span>` : ''}
+      ${isClosed ? `<span class="done-badge" title="Completed" aria-label="Completed">✓</span>` : ''}
       ${timerBtnHtml}
       <div class="txt">${isAgenda ? buildAgendaHeadlineHtml(item, hf) : highlightMatches(item.text, (hf&&hf.text&&hf.text.length)?hf.text:null)}</div>
       <div class="item-meta">${metaHtml}</div>
@@ -3909,6 +4000,17 @@ let shapeSetByPrefix = false; // true only when the current pendingKind came fro
 // the Add sheet's current visit, exactly like pendingTags/pendingToggles/pendingAgendaPoints
 // above. Never stored on state: it isn't item data, it's "what the Add sheet is doing right now."
 let pendingSpinoffParentId = null;
+// Due date is optional for every Kind except Action, where it's required: the label says so, the
+// Today/Tomorrow/Next-week shortcuts appear, and "More details" is opened so the field is in view.
+// (An @/&due phrase typed into the text — "call Ahmed tomorrow" — also satisfies it at Save.)
+function syncAddDueUi(){
+  const isAction = pendingKind==='action';
+  const label = document.getElementById('add-due-label');
+  label.textContent = isAction ? 'Due date (required for Actions)' : 'Due date (optional)';
+  document.getElementById('add-due-block').classList.toggle('due-required', isAction);
+  document.getElementById('add-due-quick').style.display = isAction ? 'flex' : 'none';
+  if(isAction){ const d = document.getElementById('add-more-details'); if(d) d.open = true; }
+}
 function openAddSheet(){
   pendingKind = null;
   pendingTags = [];
@@ -3920,7 +4022,7 @@ function openAddSheet(){
   shapeSetByPrefix = false;
   document.getElementById('add-text').value='';
   document.getElementById('add-text').placeholder = "What's on your mind?";
-  document.getElementById('add-due-label').textContent = 'Due date (optional)';
+  syncAddDueUi();
   document.getElementById('shape-fields').innerHTML='';
   document.getElementById('add-due').value='';
   document.getElementById('add-tag-input').value='';
@@ -4059,7 +4161,7 @@ function chooseShape(k, viaPrefix){
   }
   renderCapturePreview(); // an @assignee's applicability depends on the newly-chosen kind
   document.getElementById('add-text').placeholder = "What's on your mind?";
-  document.getElementById('add-due-label').textContent = 'Due date (optional)';
+  syncAddDueUi();
   if(k==='priority'){
     f.innerHTML = `
       <div class="toggle-row">
@@ -4303,6 +4405,13 @@ function saveNewItem(){
   const parsed = parseQuickCapture(text);
   const dropped = [];
   const dueInput = document.getElementById('add-due');
+  // Actions always have a due date — checked BEFORE anything below can create tags or change state
+  if(pendingKind==='action' && !dueInput.value && !parsed.dueDate){
+    showToast(ACTION_DUE_MSG, null);
+    const d = document.getElementById('add-more-details'); if(d) d.open = true;
+    try{ dueInput.focus(); }catch(e){}
+    return;
+  }
   if(parsed.dueDate && !dueInput.value) dueInput.value = parsed.dueDate; // never clobber a manually-picked date
   if(parsed.dueRaw) text = text.replace(parsed.dueRaw, '').trim(); // due-date always structurally applies (shared spine), so always consumed
   // an unresolved due-phrase (parsed.dueUnresolved) is deliberately left untouched in the
@@ -4915,6 +5024,7 @@ function buildItemFromAgendaPoint(kindChoice, pointText, agendaItem){
     links: [{ targetId: agendaItem.id }]
   };
   if(kind==='priority'){ newItem.impact=null; newItem.urgency=null; newItem.pulledOn=null; }
+  if(kind==='action'){ newItem.dueDate = (agendaItem.dueDate && agendaItem.dueDate>=todayStr()) ? agendaItem.dueDate : todayStr(); } // Actions always have a due date: the meeting's date if still ahead, else today
   if(kind==='action'){ newItem.assignedTo = agendaItem.assignedTo || null; } // Assignee carries over here deliberately — it's who's meant to follow up on this Agenda's work, which is exactly what an Action's assignee means
   if(kind==='decision'){ newItem.reasoning=''; newItem.confidence=null; }
   state.items.push(newItem);
@@ -5248,10 +5358,15 @@ function renderEditFields(){
   }
   // Due date / Snooze / Tags are optional enrichment — collapsed under "More details" unless
   // the item already has one of them set, so existing saved data is never hidden by default.
-  const moreOpen = !!item.dueDate || !!editDraft.snoozedUntil || editDraft.tags.length>0;
+  const dueInDetails = effectiveKind!=='action'; // Action's required due date lives outside the disclosure, so it never forces it open
+  const moreOpen = (dueInDetails && !!item.dueDate) || !!editDraft.snoozedUntil || editDraft.tags.length>0;
+  // Action: the due date is required, so it sits in plain view above "More details" (with shortcuts)
+  const dueRequired = effectiveKind==='action';
+  const dueHtml = `<div class="lbl" style="font-size:11px; color:var(--text-3); margin-bottom:4px;">Due date${dueRequired?' (required)':''}</div>
+    <input type="date" id="ed-due" value="${escapeHtml(item.dueDate||'')}">${dueRequired ? dueQuickPicksHtml('ed-due') : ''}`;
+  if(dueRequired) extra += `<div class="due-required">${dueHtml}</div>`;
   extra += `<details class="more-details"${moreOpen?' open':''}><summary></summary><div class="more-details-body">`;
-  extra += `<div class="lbl" style="font-size:11px; color:var(--text-3); margin-bottom:4px;">Due date</div>
-    <input type="date" id="ed-due" value="${escapeHtml(item.dueDate||'')}">`;
+  if(!dueRequired) extra += dueHtml;
   if(item.status !== 'closed'){
     extra += `<div class="lbl" style="font-size:11px; color:var(--text-3); margin:6px 0 4px;">
       Snooze ${editDraft.snoozedUntil ? `until ${new Date(editDraft.snoozedUntil).toLocaleDateString()}` : '(off)'}
@@ -5333,8 +5448,21 @@ function closeEditSheet(){
 // Pattern check #2: a due date that keeps getting pushed later, repeatedly, usually means the
 // date itself isn't realistic rather than that "just one more push" will finally be right.
 // Fires at Save (the trigger, as agreed) — before the change is committed, not after.
+// Gate shared by Save and Complete in the Edit sheet: an Action (or a Vault item being moved to
+// Action) can't be left without a due date. Returns true when it's fine to go ahead.
+function requireActionDue(item){
+  const becomesAction = item.kind==='action' || (item.kind===null && editPromoteKind==='action');
+  const dueEl = document.getElementById('ed-due');
+  if(!becomesAction || !dueEl) return true;
+  if((dueEl.value||'').trim()) return true;
+  showToast(ACTION_DUE_MSG, null);
+  const det = dueEl.closest('details'); if(det) det.open = true;
+  try{ dueEl.focus(); }catch(e){}
+  return false;
+}
 function handleEditSave(itemId){
   const item = state.items.find(i=>i.id===itemId);
+  if(item && !requireActionDue(item)) return;
   const dueField = document.getElementById('ed-due');
   if(item && dueField){
     const newDue = dueField.value.trim() || null;
@@ -5360,6 +5488,7 @@ function handleEditSave(itemId){
 }
 function saveEditSheet(itemId){
   const item = state.items.find(i=>i.id===itemId);
+  if(item && !requireActionDue(item)) return;
   // Cross-kind duplicate guard, rename case: only fires when the text is actually being
   // changed INTO a match — editing unrelated fields (tags, due date) on an item that happens
   // to already coincidentally share text with another never re-nags on every save.
@@ -5470,6 +5599,7 @@ function addOutcomeAndMaybeComplete(itemId){ saveEditSheet(itemId); }
 function completeFromEdit(itemId){
   const item = state.items.find(i=>i.id===itemId);
   if(!item) return;
+  if(!requireActionDue(item)) return;
   commitEditDraftIntoItem(item);
   if(!canCompleteItem(itemId)){
     save();
@@ -5486,13 +5616,30 @@ function completeFromEdit(itemId){
 
 
 /* ---------- Log ---------- */
-let logFilters = { kinds: ['priority','action','decision',null,'agenda'], q:'' }; // kinds: multi-select array of 'priority'|'action'|'decision'|null(vault)|'agenda'; starts with all selected (= show everything), unselecting a chip narrows it out
+let logFilters = { kinds: ['priority','action','decision',null,'agenda'], q:'', status:'all' }; // kinds: multi-select array of 'priority'|'action'|'decision'|null(vault)|'agenda'; starts with all selected (= show everything), unselecting a chip narrows it out
 function renderLogChips(){
   const chips = [['priority','Priorities','kind-priority'],['action','Actions','kind-action'],['decision','Decisions','kind-decision'],[null,'Vault','kind-vault'],['agenda','Agendas','kind-agenda']];
   const wrap = document.getElementById('log-chips');
   wrap.innerHTML = chips.map(([k,label,cls])=>
     `<div class="chip ${cls} ${logFilters.kinds.includes(k)?'active':''}" onclick="toggleKindFilter(${k?`'${k}'`:'null'})">${label}</div>`
   ).join('');
+}
+// One button cycles All -> Active -> Completed -> All. Applies on top of the kind chips and search
+// (AND), and — unlike the chips — also while a link-filter is showing, since it works there too.
+const LOG_STATUS_ORDER = ['all','active','completed'];
+const LOG_STATUS_LABEL = { all:'All', active:'Active', completed:'Completed' };
+function cycleLogStatusFilter(){
+  const i = LOG_STATUS_ORDER.indexOf(logFilters.status);
+  logFilters.status = LOG_STATUS_ORDER[(i+1) % LOG_STATUS_ORDER.length];
+  renderLog();
+}
+function renderLogStatusBtn(){
+  const btn = document.getElementById('log-status-btn');
+  if(!btn) return;
+  const st = logFilters.status || 'all';
+  btn.textContent = LOG_STATUS_LABEL[st];
+  btn.classList.toggle('filtered', st!=='all');
+  btn.setAttribute('aria-label', st==='all' ? 'Showing all items — tap to show only active' : st==='active' ? 'Showing active items — tap to show only completed' : 'Showing completed items — tap to show all');
 }
 function toggleKindFilter(k){
   const idx = logFilters.kinds.indexOf(k);
@@ -5611,9 +5758,13 @@ function renderLog(){
       results = results.filter(i=> itemMatchesLogQuery(i, activeFilters));
     }
   }
+  const statusFilter = logFilters.status || 'all';
+  if(statusFilter==='active') results = results.filter(i=>i.status!=='closed');
+  else if(statusFilter==='completed') results = results.filter(i=>i.status==='closed');
+  renderLogStatusBtn();
   wrap.innerHTML='';
   renderNavBadge('log', results.length);
-  if(!results.length){ wrap.innerHTML = `<div class="empty-hint">Nothing matches.</div>`; return; }
+  if(!results.length){ wrap.innerHTML = `<div class="empty-hint">${statusFilter==='all' ? 'Nothing matches.' : 'Nothing matches — showing '+LOG_STATUS_LABEL[statusFilter].toLowerCase()+' items only.'}</div>`; return; }
   const byKindThenDate = (a,b)=>{
     const k = kindSortIndex(a.kind===undefined?null:a.kind) - kindSortIndex(b.kind===undefined?null:b.kind);
     if(k) return k;
@@ -5621,7 +5772,12 @@ function renderLog(){
   };
   const active = results.filter(i=>i.status!=='closed').sort(byKindThenDate);
   const completed = results.filter(i=>i.status==='closed').sort(byKindThenDate);
+  // Both groups on screen -> label them, so Active and Completed can't be mistaken for one list
+  const showGroupHeads = active.length>0 && completed.length>0;
+  const groupHead = (cls, label, n)=>{ const h = document.createElement('div'); h.className = 'log-group-head'+(cls?' '+cls:''); h.textContent = `${label} · ${n}`; return h; };
+  if(showGroupHeads) wrap.appendChild(groupHead('', 'Active', active.length));
   active.forEach(i=> wrap.appendChild(renderItemRow(i, {selectable: logSelectMode, highlightFilters: activeFilters})));
+  if(showGroupHeads) wrap.appendChild(groupHead('done', '✓ Completed', completed.length));
   completed.forEach(i=> wrap.appendChild(renderItemRow(i, {selectable: logSelectMode, highlightFilters: activeFilters})));
 }
 
@@ -6665,6 +6821,7 @@ window.addEventListener('resize', applyLayoutMode);
 // Boot is split so the lock can sit in front of it: normalizeLoadedState() + the first render run
 // each time a state has just been loaded (immediately when there's no lock, after every unlock
 // when there is one); the listeners/intervals in the second half are attached exactly once.
+let pendingActionDueNotice = 0;
 function normalizeLoadedState(){
   if(!state.settings) state.settings = { pullCap: 3 };
   if(!state.settings.theme) state.settings.theme = 'midnight';
@@ -6673,6 +6830,7 @@ function normalizeLoadedState(){
   if(state.activeFocusSession === undefined) state.activeFocusSession = null;
   if(state.activeFocusSession && state.activeFocusSession.pausedAt === undefined) state.activeFocusSession.pausedAt = null;
   migrateAgendaRecords();
+  const actionDueFixed = migrateActionDueDates(); // Actions always have a due date — fill in any that predate the rule
   // R4-B1/B2/B3: pruneHistory() only mutates state IN MEMORY — it never calls save() itself (by
   // design: callers decide when persisting is warranted). At startup, if lastPullRefreshAt is
   // still fresh, refreshPull() below is skipped, and refreshPull() was the ONLY thing that used to
@@ -6682,7 +6840,8 @@ function normalizeLoadedState(){
   // unconditionally, and never in a prune->save->prune loop, since this runs exactly once per
   // startup, not from inside save() itself.
   const prunedHistoryCount = pruneHistory(); // C4: once at startup — cheap (one pass), deterministic, never on every keystroke
-  if(prunedHistoryCount > 0) save();
+  if(prunedHistoryCount > 0 || actionDueFixed > 0) save();
+  pendingActionDueNotice = actionDueFixed;
   applyTheme();
   // G2: only actually recompute the pull on startup if the persisted refresh is missing/stale —
   // pulledOn is itself a persisted per-item field, so a recent-enough prior refresh is still
@@ -6692,6 +6851,10 @@ function normalizeLoadedState(){
   if(Date.now()-lastPullRefreshAt > TODAY_STALE_MS) refreshPull(); // stale or never refreshed — recompute now; renderAll() below covers rendering either way
 }
 let _uiInitDone = false;
+function showActionDueNotice(){
+  const n = pendingActionDueNotice; pendingActionDueNotice = 0;
+  if(n>0) showToast(`${n} open Action${n===1?' had':'s had'} no due date — set to today. Adjust any in Log.`, null);
+}
 function startApp(){
   normalizeLoadedState();
   backupStatsDirty = true; behaviorHintsDirty = true;
@@ -6700,6 +6863,7 @@ function startApp(){
     // Re-entering after a lock: the listeners below are already attached
     checkForNewerGistData('load');
     maybeShowDueTodayReminder();
+    showActionDueNotice();
     focusFabTick();
     return;
   }
@@ -6709,6 +6873,7 @@ function startApp(){
   initDayRolloverWatch();
   initGithubSyncNudge(); // R8: automatic background check + dismissible nudge on load and on returning from 15+ min idle
   maybeShowDueTodayReminder();
+  showActionDueNotice();
   syncComposerViewportHeight();
   if(window.visualViewport){
     window.visualViewport.addEventListener('resize', syncComposerViewportHeight);
