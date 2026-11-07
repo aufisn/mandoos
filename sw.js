@@ -1,7 +1,9 @@
 // Mandoos Service Worker — enables "Add to Home Screen" installability and basic offline
 // support. Bump CACHE_NAME on every deploy that changes any precached file, so old caches get
 // cleaned up and clients pick up the new version promptly (skipWaiting + clients.claim below).
-const CACHE_NAME = 'mandoos-v3';
+// Only ever delete THIS app's old caches (prefix check below): every app on the same github.io
+// origin shares one Cache Storage, so deleting "everything that isn't mine" would wipe the others.
+const CACHE_NAME = 'mandoos-v4';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -24,7 +26,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then((names) => Promise.all(names.filter((n) => n.startsWith('mandoos-') && n !== CACHE_NAME).map((n) => caches.delete(n))))
       .then(() => self.clients.claim())
   );
 });
